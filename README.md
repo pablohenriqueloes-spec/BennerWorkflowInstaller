@@ -10,7 +10,7 @@ Aplicativo em **Windows PowerShell 5.1 + Windows Forms** (Dark Mode grafite com 
 - **Instalação em lote** e sequencial via `InstallUtil.exe /sys=<nome> <exe>` (.NET Framework 4, 64 bits), com status e log por linha e checagem de duplicados.
 - **Desbloquear marcados**: `Unblock-File` recursivo na pasta de cada Workflow.
 - **Edição do `.exe.config`**: altera apenas `superServerHost`, `systemName`, `user` e `notifySenderUser`, preservando o restante (inclusive `passEncrypted`), com backup e validação de XML.
-- **Abrir Configurar (inicial)**: o `.exe.config` só passa a existir após salvar no `Configurar.exe`; a automação desse primeiro salvamento é pendência.
+- **Primeiro salvamento automático**: sem `.exe.config`, o arquivo é gerado a partir do `.exe.config.modelo` da pasta, reproduzindo o que o `Configurar.exe` faz (comprovado por análise do assembly; detalhes em [docs/LEIA-ME.txt](docs/LEIA-ME.txt)). O botão **Abrir Configurar (inicial)** fica para ajustes extras.
 - **Serviços instalados** (`Workflow Service` no nome ou display name):
   - remoção segura: parar, `sc delete`, confirmar no SCM e só então apagar a pasta, nunca fora da raiz WFL, de caminho de outro serviço ou com reparse points;
   - alteração de login via `ChangeServiceConfig` (sem senha em linha de comando), tentativa de `SeServiceLogonRight`, releitura da conta e teste opcional de partida.

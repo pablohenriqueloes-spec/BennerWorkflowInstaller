@@ -223,22 +223,48 @@ function Scan-Directories {
         [System.Windows.Forms.MessageBox]::Show(('Algumas pastas nao puderam ser consultadas:'+[Environment]::NewLine+($errors -join [Environment]::NewLine)),'Busca parcial','OK','Warning') | Out-Null
     }
 }
+# Estado do .config de uma linha: 'config' (ja existe), 'modelo' (sera gerado do .config.modelo) ou 'ausente'.
+function Get-ConfigState([string]$exe) {
+    if(Test-Path -LiteralPath ($exe+'.config') -PathType Leaf){return 'config'}
+    if(Test-Path -LiteralPath ($exe+'.config.modelo') -PathType Leaf){return 'modelo'}
+    return 'ausente'
+}
+# Sem .config, reproduz o primeiro salvamento do Configurar.exe (verificado no assembly):
+# o Configurar renomeia o .config.modelo para .config, grava os campos da tela, define
+# passwordAuth=false e remove a chave 'pass'. O passEncrypted do modelo fica intacto e
+# o servico so o le quando passwordAuth=true. Aqui o modelo e copiado (nao movido) e o
+# .config so e gravado depois de todo o XML validado.
 function Set-WorkflowConfig([string]$exe,[string]$hostName,[string]$systemName,[string]$userName,[string]$notifyUser,[string]$logFile) {
     $cfg = $exe + '.config'
-    if(-not (Test-Path -LiteralPath $cfg -PathType Leaf)) { throw "Arquivo de configuracao nao encontrado: $cfg" }
-    $backup = $cfg + '.backup_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff')
+    $model = $cfg + '.modelo'
+    $fromModel = -not (Test-Path -LiteralPath $cfg -PathType Leaf)
+    if($fromModel -and -not (Test-Path -LiteralPath $model -PathType Leaf)) { throw "Arquivo de configuracao nao encontrado: $cfg (nem modelo: $model)" }
+    $source = $(if($fromModel){$model}else{$cfg})
     $doc = New-Object System.Xml.XmlDocument
     $doc.PreserveWhitespace = $true
-    $doc.Load($cfg)
+    $doc.Load($source)
     $node = $doc.SelectSingleNode('/configuration/appSettings')
-    if($null -eq $node){ throw "Secao appSettings nao encontrada: $cfg" }
+    if($null -eq $node){ throw "Secao appSettings nao encontrada: $source" }
     $values = [ordered]@{ superServerHost=$hostName; systemName=$systemName; user=$userName; notifySenderUser=$notifyUser }
+    if($fromModel){ $values['passwordAuth']='false' }
     # Faz a atualizacao de maneira estrita: exige que cada chave exista uma unica vez.
     foreach($key in $values.Keys) {
         $matches = @($node.SelectNodes('add') | Where-Object { $_.GetAttribute('key') -ceq $key })
-        if($matches.Count -ne 1){ throw "Chave '$key' ausente ou duplicada em $cfg" }
+        if($matches.Count -ne 1){ throw "Chave '$key' ausente ou duplicada em $source" }
         $matches[0].SetAttribute('value',[string]$values[$key])
     }
+    if($fromModel){
+        foreach($old in @($node.SelectNodes('add') | Where-Object { $_.GetAttribute('key') -ceq 'pass' })){ [void]$node.RemoveChild($old) }
+        try {
+            $doc.Save($cfg)
+        } catch {
+            Remove-Item -LiteralPath $cfg -Force -ErrorAction SilentlyContinue
+            throw
+        }
+        Write-OutputLog $logFile ("CONFIG GERADO DO MODELO | Arquivo: {0} | Modelo: {1} | superServerHost={2} | systemName={3} | user={4} | notifySenderUser={5} | passwordAuth=false" -f $cfg,$model,$hostName,$systemName,$userName,$notifyUser)
+        return 'gerado'
+    }
+    $backup = $cfg + '.backup_' + (Get-Date -Format 'yyyyMMdd_HHmmss_fff')
     Copy-Item -LiteralPath $cfg -Destination $backup -ErrorAction Stop
     try {
         $doc.Save($cfg)
@@ -247,6 +273,7 @@ function Set-WorkflowConfig([string]$exe,[string]$hostName,[string]$systemName,[
         throw
     }
     Write-OutputLog $logFile ("CONFIG OK | Arquivo: {0} | Backup: {1} | superServerHost={2} | systemName={3} | user={4} | notifySenderUser={5}" -f $cfg,$backup,$hostName,$systemName,$userName,$notifyUser)
+    return 'atualizado'
 }
 
 function Write-OutputLog([string]$file,[string]$content) {
@@ -892,18 +919,17 @@ function Start-NextInstallation {
     $task=$script:Queue[$script:QueuePosition]
     $script:CurrentTask=$task
     $configError=$null
-    $task | Add-Member -NotePropertyName ConfigEdited -NotePropertyValue $false -Force
-    if(Test-Path -LiteralPath ($task.Exe+'.config') -PathType Leaf){
+    $task | Add-Member -NotePropertyName ConfigResult -NotePropertyValue '' -Force
+    if((Get-ConfigState $task.Exe) -ne 'ausente'){
         try {
             $grid.Rows[$task.Index].Cells['Status'].Value='Configurando...'
-            Set-WorkflowConfig $task.Exe $task.Host $task.System $task.User $task.NotifyUser $script:SessionLog
-            $task.ConfigEdited=$true
+            $task.ConfigResult=Set-WorkflowConfig $task.Exe $task.Host $task.System $task.User $task.NotifyUser $script:SessionLog
         } catch {
             $configError=$_.Exception.Message
         }
     } else {
-        # Sem .config (Configurar.exe ainda nao salvo): instala sem editar, conforme confirmado.
-        Write-OutputLog $script:SessionLog ("CONFIG IGNORADO | $($task.Name) | arquivo ausente: $($task.Exe).config")
+        # Sem .config e sem .config.modelo: instala sem editar, conforme confirmado.
+        Write-OutputLog $script:SessionLog ("CONFIG IGNORADO | $($task.Name) | arquivo ausente: $($task.Exe).config (sem .config.modelo)")
     }
     if($null -ne $configError) {
         $grid.Rows[$task.Index].Cells['Status'].Value='Falha (config)'
@@ -964,7 +990,7 @@ $timer.Add_Tick({
     $task=$script:CurrentTask
     $success=($exit -eq 0)
     $state=$(if($success){'SUCESSO'}else{'FALHA'})
-    $grid.Rows[$task.Index].Cells['Status'].Value=$(if(-not $success){"Falha (codigo $exit)"}elseif($task.ConfigEdited){'Sucesso'}else{'Sucesso (sem .config)'})
+    $grid.Rows[$task.Index].Cells['Status'].Value=$(if(-not $success){"Falha (codigo $exit)"}elseif($task.ConfigResult -eq 'gerado'){'Sucesso (.config gerado)'}elseif($task.ConfigResult){'Sucesso'}else{'Sucesso (sem .config)'})
     $grid.Rows[$task.Index].Cells['Status'].Style.ForeColor=$(if($success){[Drawing.Color]::FromArgb(103,225,158)}else{[Drawing.Color]::FromArgb(255,121,138)})
     $detail=''
     if(Test-Path -LiteralPath $script:CurrentLog){try{$detail=[IO.File]::ReadAllText($script:CurrentLog)}catch{}}
@@ -1004,7 +1030,7 @@ $initialConfigButton.Add_Click({
     [void]$grid.EndEdit()
     $selected=@($grid.Rows | Where-Object {$_.Cells['Install'].Value -eq $true})
     if($selected.Count -ne 1){
-        [System.Windows.Forms.MessageBox]::Show('Para abrir o Configurar, marque apenas uma linha por vez. Salve no configurador e depois clique Editar .config selecionados.','Configuracao inicial','OK','Information') | Out-Null;return
+        [System.Windows.Forms.MessageBox]::Show('Para abrir o Configurar, marque apenas uma linha por vez.','Configuracao inicial','OK','Information') | Out-Null;return
     }
     $exe=[string]$selected[0].Tag.Exe
     $folder=[System.IO.Path]::GetDirectoryName($exe)
@@ -1019,19 +1045,21 @@ $initialConfigButton.Add_Click({
     }
     try {
         Start-Process -FilePath $configurator[0] -WorkingDirectory (Split-Path $configurator[0] -Parent) -ErrorAction Stop | Out-Null
-        [System.Windows.Forms.MessageBox]::Show("Configurador aberto:`r`n$($configurator[0])`r`n`r`nPreencha e salve a configuracao inicial. Confira que o arquivo abaixo foi gerado na pasta correta:`r`n$cfg`r`n`r`nDepois use 'Editar .config selecionados' para aplicar os quatro campos da grade.",'Configuracao inicial','OK','Information') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show("Configurador aberto:`r`n$($configurator[0])`r`n`r`nO Configurar so e necessario para ajustes extras (email, log centralizado etc.); os quatro campos da grade sao gravados por 'Editar .config selecionados' ou 'Instalar selecionados', inclusive gerando o .config a partir do .config.modelo. Arquivo:`r`n$cfg",'Configuracao inicial','OK','Information') | Out-Null
     } catch {[System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Falha ao iniciar Configurar','OK','Error') | Out-Null}
 })
 $editConfigButton.Add_Click({
     if($script:Installing -or $script:Unlocking -or $script:EditingConfig -or $script:Removing -or $script:ChangingLogin){return}
     try{$tasks=@(Get-SelectedConfigTasks)}catch{[System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Campos invalidos','OK','Warning')|Out-Null;return}
     if($tasks.Count -eq 0){return}
-    $missing=@($tasks | Where-Object {-not (Test-Path -LiteralPath ($_.Exe+'.config') -PathType Leaf)})
+    $missing=@($tasks | Where-Object {(Get-ConfigState $_.Exe) -eq 'ausente'})
     if($missing.Count -gt 0){
         $paths=($missing | ForEach-Object {$_.Exe+'.config'}) -join "`r`n"
-        [System.Windows.Forms.MessageBox]::Show("O .config ainda nao existe para as seguintes linhas:`r`n$paths`r`n`r`nUse 'Abrir Configurar (inicial)' e salve antes de editar. Nenhum arquivo foi criado nem modificado.",'Configuracao inicial necessaria','OK','Warning') | Out-Null;return
+        [System.Windows.Forms.MessageBox]::Show("Nao existe .config nem .config.modelo para as seguintes linhas:`r`n$paths`r`n`r`nCopie a pasta completa do Workflow Service, que inclui o arquivo .config.modelo. Nenhum arquivo foi criado nem modificado.",'Configuracao inicial necessaria','OK','Warning') | Out-Null;return
     }
-    if([System.Windows.Forms.MessageBox]::Show("Editar o .config de $($tasks.Count) linha(s) selecionada(s), sem instalar servicos? Sera criado backup de cada arquivo.",'Confirmar edicao .config','YesNo','Question') -ne 'Yes'){return}
+    $fromModel=@($tasks | Where-Object {(Get-ConfigState $_.Exe) -eq 'modelo'})
+    $modelNote=$(if($fromModel.Count -gt 0){"`r`n`r`n$($fromModel.Count) linha(s) ainda sem .config: o arquivo sera gerado a partir do .config.modelo, como o Configurar faz no primeiro salvamento."}else{''})
+    if([System.Windows.Forms.MessageBox]::Show("Editar o .config de $($tasks.Count) linha(s) selecionada(s), sem instalar servicos? Sera criado backup de cada arquivo existente.$modelNote",'Confirmar edicao .config','YesNo','Question') -ne 'Yes'){return}
     try {New-Item -ItemType Directory -Path $script:LogDirectory -Force -ErrorAction Stop|Out-Null}
     catch {[System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Falha de log','OK','Error')|Out-Null;return}
     $log=Join-Path $script:LogDirectory ('Workflow_EdicaoConfig_{0}.log' -f (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
@@ -1040,8 +1068,8 @@ $editConfigButton.Add_Click({
     try {
         foreach($task in $tasks){
             try {
-                Set-WorkflowConfig $task.Exe $task.Host $task.System $task.User $task.NotifyUser $log
-                $grid.Rows[$task.Index].Cells['Status'].Value='Config atualizado';$ok++
+                $result=Set-WorkflowConfig $task.Exe $task.Host $task.System $task.User $task.NotifyUser $log
+                $grid.Rows[$task.Index].Cells['Status'].Value=$(if($result -eq 'gerado'){'Config gerado do modelo'}else{'Config atualizado'});$ok++
             } catch {
                 $grid.Rows[$task.Index].Cells['Status'].Value='Falha (config)';$failed++
                 Write-OutputLog $log ("CONFIG FALHA | {0} | {1}" -f $task.Exe,$_.Exception.Message)
@@ -1083,10 +1111,14 @@ $installButton.Add_Click({
     try {foreach($svc in [System.ServiceProcess.ServiceController]::GetServices()){[void]$existing.Add($svc.ServiceName)}} catch {}
     foreach($task in $tasks){if($existing.Contains($task.Name)){$problems.Add("Ja existe um servico no Windows com nome: $($task.Name)")}}
     if($problems.Count -gt 0){[System.Windows.Forms.MessageBox]::Show(($problems -join "`r`n"),'Servico existente','OK','Warning') | Out-Null;return}
-    $noConfig=@($tasks | Where-Object { -not (Test-Path -LiteralPath ($_.Exe+'.config') -PathType Leaf) })
+    $noConfig=@($tasks | Where-Object { (Get-ConfigState $_.Exe) -eq 'ausente' })
+    $fromModel=@($tasks | Where-Object { (Get-ConfigState $_.Exe) -eq 'modelo' })
     $noConfigNote=''
+    if($fromModel.Count -gt 0){
+        $noConfigNote+="`r`n`r`n$($fromModel.Count) linha(s) ainda sem .config: o arquivo sera gerado a partir do .config.modelo, como o Configurar faz no primeiro salvamento:`r`n"+(($fromModel | ForEach-Object { $_.Name }) -join "`r`n")
+    }
     if($noConfig.Count -gt 0){
-        $noConfigNote="`r`n`r`nATENCAO: $($noConfig.Count) linha(s) ainda nao tem .config e serao instaladas SEM editar a configuracao (use 'Abrir Configurar (inicial)' e depois 'Editar .config selecionados'):`r`n"+(($noConfig | ForEach-Object { $_.Name }) -join "`r`n")
+        $noConfigNote+="`r`n`r`nATENCAO: $($noConfig.Count) linha(s) nao tem .config nem .config.modelo e serao instaladas SEM editar a configuracao:`r`n"+(($noConfig | ForEach-Object { $_.Name }) -join "`r`n")
     }
     $confirm="Instalar $($tasks.Count) servico(s) Workflow no Windows?`r`n`r`nAntes de instalar, o .config existente de cada servico sera atualizado e recebera um backup. Instalacoes sequenciais nao sao revertidas automaticamente em caso de falha.$noConfigNote`r`n`r`nDeseja continuar?"
     if([System.Windows.Forms.MessageBox]::Show($confirm,'Confirmar instalacao','YesNo','Question') -ne 'Yes'){return}

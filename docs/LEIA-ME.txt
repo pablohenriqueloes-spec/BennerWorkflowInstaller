@@ -91,20 +91,35 @@ ORGANIZACAO DA INTERFACE
 - Primeiro bloco: descoberta, configuracao, grade, previa e botoes de instalacao/desbloqueio/logs.
 - Ultimo bloco do formulario: servicos ja instalados, alteracao de login e remocao.
 
-CONFIGURACAO INICIAL E EDICAO SEM INSTALAR (NOVO)
---------------------------------------------------
-- Para um Workflow sem .exe.config, marque UMA linha e clique "Abrir Configurar (inicial)".
-- O aplicativo procura Configurar.exe na pasta do Workflow, pasta pai ou na pasta do instalador.
-- Abra e salve o configurador da Benner; confirme que foi criado o .exe.config AO LADO do runtime.
-- Nao ha prova de parametros de CLI oficiais para o Configurar.exe; o preenchimento
-  inicial pelo configurador precisa ser feito manualmente nesta versao.
-- Apos salvar, selecione um ou mais Workflows e use "Editar .config selecionados".
-- Essa acao edita SOMENTE superServerHost, systemName, user e notifySenderUser,
-  a partir das colunas da grade, criando backup e log individual.
+CONFIGURACAO INICIAL E EDICAO SEM INSTALAR
+------------------------------------------
+- Nao e mais preciso salvar no Configurar.exe antes de instalar. Quando o
+  .exe.config nao existe, o instalador o gera a partir do arquivo
+  Benner.Tecnologia.Workflow.Runtime.Application.exe.config.modelo que vem na
+  pasta do Workflow Service, repetindo o que o Configurar faz no primeiro salvamento.
+- Como isso foi comprovado (analise do Configurar.exe e do
+  Benner.Tecnologia.Workflow.Commons.dll, versao enviada em 26/10/2026):
+  * Ao abrir, o Configurar procura *.config (exceto log4net) na sua pasta; se nao
+    houver, RENOMEIA o *.config.modelo para .config (File.Move).
+  * Ao salvar, grava os campos da tela, define passwordAuth=false e remove a chave
+    "pass". Ele nao cria nem altera passEncrypted.
+  * O servico so le passEncrypted quando passwordAuth=true. Com passwordAuth=false,
+    o valor de exemplo do modelo e ignorado.
+- O instalador COPIA o modelo (ele continua na pasta), aplica superServerHost,
+  systemName, user e notifySenderUser da grade, passwordAuth=false e remove "pass".
+  O .config so e gravado depois de todo o XML validado; se a gravacao falhar, o
+  arquivo parcial e apagado. Os demais valores (email, providers etc.) ficam iguais
+  aos do modelo, como ficariam ao salvar o Configurar sem mexer nesses campos.
+- "Editar .config selecionados": edita o .config existente (com backup) ou o gera do
+  modelo. Se a linha nao tiver .config nem .config.modelo, o lote e bloqueado antes de
+  alterar arquivos. Em .config existente, passwordAuth e "pass" NAO sao alterados.
+- "Instalar selecionados": faz o mesmo antes do InstallUtil. Resultado
+  "Sucesso (.config gerado)" quando o arquivo veio do modelo; sem .config e sem
+  modelo, instala sem editar e mostra "Sucesso (sem .config)".
+- "Abrir Configurar (inicial)" continua disponivel para ajustes extras (email, log
+  centralizado, COM Free). O aplicativo procura Configurar.exe na pasta do Workflow,
+  pasta pai ou na pasta do instalador, e o abre sem argumentos (ele nao tem CLI).
 - Editar .config NAO chama InstallUtil.exe nem inicia/remove qualquer servico.
-- Se algum .config nao existir, o lote inteiro e bloqueado antes de alterar arquivos.
-- "Instalar selecionados" edita o .config quando ele existe; sem .config, instala sem editar (veja MELHORIAS PARA TESTE).
-- O campo passEncrypted e preservado, nao e criado ou substituido automaticamente.
 
 MELHORIAS PARA TESTE (26/10/2026)
 ---------------------------------
@@ -112,11 +127,10 @@ MELHORIAS PARA TESTE (26/10/2026)
   ganha barras de rolagem quando nao couber (RDP, resolucao baixa ou escala > 100%).
 - Grade de servicos instalados: colunas separadas "Login" (para Alterar login
   selecionados) e "Remover" (para Remover selecionados).
-- Instalar selecionados: uma linha sem .exe.config agora e instalada SEM editar a
-  configuracao. A confirmacao lista essas linhas, o log registra "CONFIG IGNORADO" e o
-  resultado aparece como "Sucesso (sem .config)". Depois, rode o Configurar e use
-  "Editar .config selecionados". Um .config existente mas invalido continua impedindo
-  a instalacao da linha.
+- Instalar selecionados: uma linha sem .exe.config e sem .config.modelo e instalada
+  SEM editar a configuracao. A confirmacao lista essas linhas, o log registra
+  "CONFIG IGNORADO" e o resultado aparece como "Sucesso (sem .config)". Um .config
+  existente mas invalido continua impedindo a instalacao da linha.
 - Alterar login: se nao for possivel conceder "Log on as a service" (ex.: GPO), a
   alteracao continua, com aviso no log e na tela; o resultado aparece como
   "Login alterado (sem direito confirmado)". Use o teste de partida para validar.
