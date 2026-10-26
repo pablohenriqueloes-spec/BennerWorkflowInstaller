@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------
+# Configurações reais dos Workflows (podem conter credenciais,
+# passEncrypted, hosts internos). Nunca versionar.
+# ---------------------------------------------------------------
+*.config
+*.config.bak
+*.config.*.bak
+*.bak
+# Exemplos sanitizados podem ser versionados explicitamente:
+!*.config.example
+!*.config.sample
+
+# Executáveis e binários de terceiros (Configurar.exe, Runtime etc.)
+*.exe
+*.dll
+*.pdb
+
+# ---------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------
+*.log
+logs/
+Logs/
+*.InstallLog
+*.InstallState
+
+# ---------------------------------------------------------------
+# Pacotes e artefatos de distribuição
+# ---------------------------------------------------------------
+*.zip
+*.7z
+*.rar
+dist/
+out/
+release/
+
+# ---------------------------------------------------------------
+# Credenciais e segredos
+# ---------------------------------------------------------------
+.env
+.env.*
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+*.snk
+*credential*
+*credenciais*
+*secret*
+*senha*
+*password*
+
+# ---------------------------------------------------------------
+# Sistema operacional e editores
+# ---------------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
