@@ -168,6 +168,26 @@
     <Setter Property="Background" Value="Transparent"/>
   </Style>
 
+  <!-- Botao dentro de celula da grade (ex.: coluna Erro) -->
+  <Style x:Key="Btn.Cell" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+    <Setter Property="Height" Value="24"/>
+    <Setter Property="Padding" Value="8,0"/>
+    <Setter Property="FontWeight" Value="Normal"/>
+    <Setter Property="FontSize" Value="12"/>
+    <Setter Property="Background" Value="#29E2234D"/>
+    <Setter Property="BorderBrush" Value="#8A2A3B"/>
+    <Setter Property="Foreground" Value="{StaticResource Brush.Error}"/>
+    <Setter Property="HorizontalAlignment" Value="Left"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    <Style.Triggers>
+      <Trigger Property="IsEnabled" Value="False">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderBrush" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{StaticResource Brush.Muted}"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+
   <!-- Campos -->
   <ControlTemplate x:Key="InputTemplate" TargetType="Control">
     <Border x:Name="bd" CornerRadius="5" Background="{TemplateBinding Background}"

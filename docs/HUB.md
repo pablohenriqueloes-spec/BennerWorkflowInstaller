@@ -68,9 +68,9 @@ Set-WorkflowServiceLogon -Name $instalados[0].Name -Account 'DOMINIO\svc_wfl' -P
 Test-WorkflowServiceStart -Name $instalados[0].Name -LogFile $log
 ```
 
-Funções de apoio: `Get-WorkflowServiceName`, `Test-WorkflowServiceName`, `Get-WorkflowConfigState`, `Test-WorkflowConfigValues`, `Get-WorkflowInstallCommand`, `Get-WorkflowExistingServiceNames`, `Start-WorkflowInstall` e `Start-WorkflowUnblock` (versões assíncronas que devolvem o processo), `Write-WorkflowInstallResult`, `Find-WorkflowConfigurator`, `Test-WorkflowRemovalFolder`, `Test-WorkflowLogonInput`.
+Funções de apoio: `Get-WorkflowServiceName`, `Test-WorkflowServiceName`, `Get-WorkflowConfigState`, `Test-WorkflowConfigValues`, `Get-WorkflowInstallCommand`, `Get-WorkflowExistingServiceNames`, `Start-WorkflowInstall` e `Start-WorkflowUnblock` (versões assíncronas que devolvem o processo), `Write-WorkflowInstallResult`, `Find-WorkflowConfigurator`, `Test-WorkflowRemovalFolder`, `Test-WorkflowLogonInput`, `Get-WorkflowLastError` (último erro do arquivo `errors`), `Get-WorkflowErrorFile`, `ConvertFrom-WorkflowErrorLog`.
 
-O núcleo (`BennerHub.Core.psm1`) oferece o que não é específico do Workflow e pode servir a outros módulos: `New-HubLogFile`, `Write-HubLog`, `Start-HubPowerShellProcess`, `Get-HubServiceExePath`, `Get-HubServiceInfo`, `Set-HubServiceLogon`, `Grant-HubServiceLogonRight`, `Restart-HubService`, `Show-HubMessage`, `Invoke-HubSafe`, `New-HubTimer`, `Select-HubFolder`, `Test-HubRowMatch` e o tipo `BennerHub.HubRow` (linha observável para grades).
+O núcleo (`BennerHub.Core.psm1`) oferece o que não é específico do Workflow e pode servir a outros módulos: `New-HubLogFile`, `Write-HubLog`, `Start-HubPowerShellProcess`, `Get-HubServiceExePath`, `Get-HubServiceInfo`, `Set-HubServiceLogon`, `Grant-HubServiceLogonRight`, `Restart-HubService`, `Read-HubFileTail`, `Show-HubMessage`, `Invoke-HubSafe`, `New-HubTimer`, `Select-HubFolder`, `Test-HubRowMatch` e o tipo `BennerHub.HubRow` (linha observável para grades).
 
 ## Criar um módulo novo
 
@@ -102,6 +102,7 @@ O HUB lista o módulo no menu na próxima abertura e só carrega o código quand
 - Status por linha em etiquetas coloridas (pronto, na fila, instalando, sucesso, falha).
 - Coluna nova **.config** na grade de instalação: mostra se o arquivo existe, se será gerado do modelo ou se está ausente.
 - Coluna nova **Conta de logon** na grade de serviços instalados.
+- Coluna nova **Erro** na grade de serviços instalados: mostra o último registro com `Categoria: Error` (pela Data/Hora) do arquivo `errors` da pasta do serviço. O botão de cada linha abre uma janela com o registro completo, que pode ser arrastada, minimizada, maximizada e fechada; clicar de novo na mesma linha restaura a janela já aberta. Só o fim do arquivo é lido (1 MB, ampliando até 32 MB se não houver erro nesse trecho).
 - O "marcar todos" no cabeçalho mostra estado parcial quando só parte das linhas visíveis está marcada.
 - A senha do login vem de um `PasswordBox` e vai ao Windows por memória protegida (`SecureString`), sem passar por string comum no PowerShell.
 - Ao fim de uma instalação, a lista de serviços instalados é atualizada sozinha.
@@ -118,7 +119,8 @@ Faça num servidor de homologação, com uma cópia de pastas Workflow de teste.
 5. **Instalar selecionados:** 2 linhas; confira as etiquetas, o progresso, o log da sessão e que os serviços aparecem na grade de baixo.
 6. **Desbloquear marcados:** numa pasta copiada da internet; confira a coluna Desbloqueio e o log.
 7. **Alterar login:** conta de teste com senha errada (o teste de partida deve falhar) e depois com a certa. Confira que o campo senha fica vazio e que o log não tem a senha.
-8. **Remover:** um serviço de teste; confira que a pasta só some depois do serviço sair do SCM. Tente remover um serviço fora da raiz WFL (deve bloquear).
-9. **Fechar durante um lote:** deve pedir para aguardar.
+8. **Coluna Erro:** confira o último erro de um serviço com arquivo `errors`; abra a janela, minimize, clique de novo na mesma linha (deve restaurar a mesma janela) e maximize.
+9. **Remover:** um serviço de teste; confira que a pasta só some depois do serviço sair do SCM. Tente remover um serviço fora da raiz WFL (deve bloquear).
+10. **Fechar durante um lote:** deve pedir para aguardar.
 
 Se algo falhar, mande o print e o conteúdo de `C:\ProgramData\Benner\Hub\BennerHub_erro.log` (se existir) e do log da operação em `C:\ProgramData\Benner\WorkflowInstaller\Logs`.

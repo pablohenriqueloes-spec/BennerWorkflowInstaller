@@ -394,6 +394,65 @@ function Remove-WorkflowService {
 }
 
 # ---------------------------------------------------------------------------
+# Ultimo erro registrado pelo servico (arquivo "errors" na pasta de instalacao)
+# Registros separados por linhas de asteriscos; os de erro trazem "Categoria: Error".
+# ---------------------------------------------------------------------------
+function Get-WorkflowErrorFile {
+    <# Arquivo errors (sem extensao ou errors.<ext>) mais recente da pasta, ou $null. #>
+    param([string]$Folder)
+    if ([string]::IsNullOrWhiteSpace($Folder) -or -not (Test-Path -LiteralPath $Folder -PathType Container)) { return $null }
+    return Get-ChildItem -LiteralPath $Folder -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^errors(\.[^.]+)?$' } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+}
+
+function ConvertFrom-WorkflowErrorLog {
+    <# Separa o texto em registros e devolve os de "Categoria: Error" com Data/Hora interpretada. #>
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text, [bool]$Partial = $false)
+    $blocks = [regex]::Split($Text, '(?m)^[ \t]*\*{10,}[ \t]*\r?$')
+    $culture = [System.Globalization.CultureInfo]::GetCultureInfo('pt-BR')
+    $formats = [string[]]@('dd/MM/yyyy HH:mm:ss', 'd/M/yyyy H:mm:ss', 'dd/MM/yyyy HH:mm', 'd/M/yyyy H:mm')
+    for ($i = 0; $i -lt $blocks.Count; $i++) {
+        # Com leitura parcial, o primeiro pedaco pode ser o fim de um registro cortado.
+        if ($Partial -and $i -eq 0) { continue }
+        $block = $blocks[$i].Trim()
+        if ($block -notmatch 'Categoria:\s*Error\b') { continue }
+        $stamp = $null
+        $m = [regex]::Match($block, 'Data/Hora:\s*(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?)')
+        if ($m.Success) {
+            $value = ($m.Groups[1].Value -replace '\s+', ' ')
+            $parsed = [datetime]::MinValue
+            if ([datetime]::TryParseExact($value, $formats, $culture, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) { $stamp = $parsed }
+        }
+        $message = ''
+        $mm = [regex]::Match($block, '(?s)Mensagem:\s*(.*?)\s*(?:\r?\n\s*(?:StackTrace:|Categoria:)|$)')
+        if ($mm.Success) { $message = (($mm.Groups[1].Value -split '\r?\n') | Where-Object { $_.Trim() } | Select-Object -First 1) }
+        [pscustomobject]@{ Index = $i; Timestamp = $stamp; Message = ([string]$message).Trim(); Text = $block }
+    }
+}
+
+function Get-WorkflowLastError {
+    <#
+    Ultimo registro "Categoria: Error" (pela Data/Hora) do arquivo errors da pasta do servico.
+    Le so o fim do arquivo (1 MB, ampliando ate 32 MB se nao achar erro). Devolve um objeto com
+    Status: 'erro' (registro em Text/Timestamp/Message), 'sem-erros' ou 'sem-arquivo'.
+    #>
+    param([string]$Folder)
+    $file = Get-WorkflowErrorFile -Folder $Folder
+    if ($null -eq $file) { return [pscustomobject]@{ Status = 'sem-arquivo'; File = $null; Timestamp = $null; Message = ''; Text = '' } }
+    foreach ($size in @(1MB, 8MB, 32MB)) {
+        $tail = Read-HubFileTail -Path $file.FullName -MaxBytes $size
+        $records = @(ConvertFrom-WorkflowErrorLog -Text $tail.Text -Partial $tail.Partial)
+        if ($records.Count -gt 0) {
+            $last = $records | Sort-Object @{ Expression = { if ($_.Timestamp) { $_.Timestamp } else { [datetime]::MinValue } } }, Index | Select-Object -Last 1
+            return [pscustomobject]@{ Status = 'erro'; File = $file.FullName; Timestamp = $last.Timestamp; Message = $last.Message; Text = $last.Text }
+        }
+        if (-not $tail.Partial) { break }
+    }
+    return [pscustomobject]@{ Status = 'sem-erros'; File = $file.FullName; Timestamp = $null; Message = ''; Text = '' }
+}
+
+# ---------------------------------------------------------------------------
 # Etapa 6: conta de logon
 # ---------------------------------------------------------------------------
 function Test-WorkflowLogonInput {

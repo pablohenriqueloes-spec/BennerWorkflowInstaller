@@ -17,7 +17,9 @@ $script:BulkUpdate = $false
 $script:Flags = @{ Installing = $false; Unlocking = $false; EditingConfig = $false; Removing = $false; ChangingLogin = $false }
 
 $script:FoundSearchKeys = @('First', 'Second', 'ServiceName', 'SuperServerHost', 'SystemName', 'WorkflowUser', 'NotifySenderUser', 'ConfigText', 'Status', 'UnlockStatus')
-$script:InstalledSearchKeys = @('Name', 'Display', 'State', 'StartName', 'Folder', 'Result')
+$script:InstalledSearchKeys = @('Name', 'Display', 'State', 'StartName', 'Folder', 'Result', 'ErrorSummary')
+# Janelas de erro abertas, por nome de servico: reabrir a mesma linha restaura a janela existente.
+$script:ErrorWindows = @{}
 
 # Fila de instalacao e de desbloqueio (acompanhadas por timer na thread da interface).
 $script:Queue = @(); $script:QueuePosition = 0; $script:CurrentProcess = $null; $script:CurrentTask = $null; $script:SessionLog = $null
@@ -516,6 +518,7 @@ function Refresh-Installed {
             Set-RowState $row 'State' $svc.State (Get-StateKind $svc.State)
             $row['StartName'] = $svc.StartName; $row['Folder'] = $svc.Folder; $row['Exe'] = $svc.Exe
             Set-RowState $row 'Result' ''
+            Update-RowError $row
             $row['Visible'] = $true
             $row.add_ValueChanged({ param($s, $e) if (-not $script:BulkUpdate -and ($e.Key -eq 'LoginSel' -or $e.Key -eq 'Remove')) { Invoke-HubSafe { Update-InstalledSelection } } })
             $script:InstalledRows.Add($row)
@@ -524,6 +527,67 @@ function Refresh-Installed {
         Show-HubMessage -Text $_.Exception.Message -Title 'Falha consultando serviços' -Kind Error | Out-Null
     }
     Apply-InstalledFilter
+}
+
+# ---------------------------------------------------------------------------
+# Coluna Erro: ultimo registro "Categoria: Error" do arquivo errors do servico
+# ---------------------------------------------------------------------------
+function Update-RowError($Row) {
+    try { $err = Get-WorkflowLastError -Folder ([string]$Row['Folder']) }
+    catch { $err = [pscustomobject]@{ Status = 'falha'; File = $null; Timestamp = $null; Message = $_.Exception.Message; Text = '' } }
+    $Row['ErrorRecord'] = $err
+    $Row['HasError'] = ($err.Status -eq 'erro')
+    switch ($err.Status) {
+        'erro' {
+            $when = $(if ($err.Timestamp) { $err.Timestamp.ToString('dd/MM/yyyy HH:mm:ss') } else { 'sem data' })
+            $Row['ErrorSummary'] = $(if ($err.Message) { "$when  $($err.Message)" } else { $when })
+            $Row['ErrorTip'] = "Clique para ver o registro completo`r`n$($err.File)"
+        }
+        'sem-erros' { $Row['ErrorSummary'] = 'Sem erros registrados'; $Row['ErrorTip'] = $err.File }
+        'sem-arquivo' { $Row['ErrorSummary'] = 'Sem arquivo errors'; $Row['ErrorTip'] = 'Nenhum arquivo errors na pasta do serviço' }
+        default { $Row['ErrorSummary'] = 'Falha ao ler errors'; $Row['ErrorTip'] = $err.Message }
+    }
+}
+
+function Set-ErrorWindowContent($Entry, $Row) {
+    $err = $Row['ErrorRecord']
+    $Entry.Record = $err
+    $Entry.UI.ServiceText.Text = [string]$Row['Name']
+    $when = $(if ($err.Timestamp) { $err.Timestamp.ToString('dd/MM/yyyy HH:mm:ss') } else { 'sem data' })
+    $Entry.UI.MetaText.Text = $(if ($err.Status -eq 'erro') { "$when  ·  $($err.File)" } else { [string]$Row['ErrorSummary'] })
+    $Entry.UI.RecordBox.Text = [string]$err.Text
+    $Entry.UI.CopyButton.IsEnabled = ($err.Status -eq 'erro')
+    $Entry.UI.OpenFileButton.IsEnabled = [bool]$err.File
+}
+
+function Show-WorkflowErrorWindow($Row) {
+    $name = [string]$Row['Name']
+    # Sempre rele o arquivo para mostrar o registro mais recente.
+    Update-RowError $Row
+    if ($script:ErrorWindows.ContainsKey($name)) {
+        $entry = $script:ErrorWindows[$name]
+        Set-ErrorWindowContent $entry $Row
+        if ($entry.Window.WindowState -eq [System.Windows.WindowState]::Minimized) { $entry.Window.WindowState = $entry.LastState }
+        [void]$entry.Window.Activate()
+        return
+    }
+    $xamlPath = Join-Path $PSScriptRoot 'ErrorRecord.xaml'
+    $window = Import-HubXaml -Path $xamlPath
+    $entry = [pscustomobject]@{ Name = $name; Window = $window; UI = (Get-HubNamedElements -Root $window -XamlPath $xamlPath); Record = $null; LastState = [System.Windows.WindowState]::Normal }
+    $window.Title = "Erro · $name"
+    Set-ErrorWindowContent $entry $Row
+    foreach ($b in $entry.UI.CopyButton, $entry.UI.OpenFileButton, $entry.UI.CloseButton) { $b.Tag = $name }
+    $entry.UI.CloseButton.Add_Click({ param($s, $e) Invoke-HubSafe { $script:ErrorWindows[[string]$s.Tag].Window.Close() } })
+    $entry.UI.CopyButton.Add_Click({ param($s, $e) Invoke-HubSafe { [System.Windows.Clipboard]::SetText([string]$script:ErrorWindows[[string]$s.Tag].Record.Text) } })
+    $entry.UI.OpenFileButton.Add_Click({ param($s, $e) Invoke-HubSafe {
+                $file = [string]$script:ErrorWindows[[string]$s.Tag].Record.File
+                if ($file) { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"{0}"' -f $file) }
+            } })
+    # Guarda o ultimo estado nao minimizado (Normal/Maximizado) para restaurar igual.
+    $window.Add_StateChanged({ param($s, $e) foreach ($en in @($script:ErrorWindows.Values)) { if ($en.Window -eq $s -and $s.WindowState -ne [System.Windows.WindowState]::Minimized) { $en.LastState = $s.WindowState } } })
+    $window.Add_Closed({ param($s, $e) foreach ($k in @($script:ErrorWindows.Keys)) { if ($script:ErrorWindows[$k].Window -eq $s) { $script:ErrorWindows.Remove($k) } } })
+    $script:ErrorWindows[$name] = $entry
+    $window.Show()
 }
 
 function Set-InstalledBusy([string]$Flag, [bool]$Value) {
@@ -690,6 +754,15 @@ function New-WorkflowView {
     $ui.RefreshButton.Add_Click({ Invoke-HubSafe { Refresh-Installed } })
     $ui.RemoveButton.Add_Click({ Invoke-HubSafe { Invoke-RemoveServices } })
     $ui.ChangeLoginButton.Add_Click({ Invoke-HubSafe { Invoke-ChangeLogin } })
+    # Botao da coluna Erro (dentro do modelo da celula): um unico tratador na grade.
+    $ui.InstalledGrid.AddHandler([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent, [System.Windows.RoutedEventHandler] {
+            param($s, $e)
+            $src = $e.OriginalSource
+            if ($src -is [System.Windows.Controls.Button] -and $src.DataContext -is [BennerHub.HubRow]) {
+                $e.Handled = $true
+                Invoke-HubSafe { Show-WorkflowErrorWindow $src.DataContext } -Title 'Falha ao abrir o registro de erro'
+            }
+        })
 
     Refresh-Installed
     if (Test-Path -LiteralPath $ui.RootBox.Text -PathType Container) { Invoke-Scan } else { Update-Selection }

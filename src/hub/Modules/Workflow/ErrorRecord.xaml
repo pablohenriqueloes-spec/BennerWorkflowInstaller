@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Janela (nao modal) com o ultimo registro de erro de um Workflow Service. -->
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Erro do serviço" Width="860" Height="560" MinWidth="480" MinHeight="300"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResize" ShowInTaskbar="True"
+        Background="{StaticResource Brush.Back}" Foreground="{StaticResource Brush.Ink}"
+        FontFamily="Segoe UI" FontSize="13"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+  <DockPanel Margin="20,16,20,18">
+    <StackPanel DockPanel.Dock="Top">
+      <TextBlock Text="ÚLTIMO ERRO REGISTRADO" Style="{StaticResource Text.Eyebrow}" HorizontalAlignment="Left"/>
+      <TextBlock x:Name="ServiceText" Style="{StaticResource Text.Title}" FontSize="17" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+      <TextBlock x:Name="MetaText" Style="{StaticResource Text.Muted}" Margin="0,4,0,0"/>
+    </StackPanel>
+    <DockPanel DockPanel.Dock="Bottom" Margin="0,14,0,0" LastChildFill="False">
+      <Button x:Name="OpenFileButton" DockPanel.Dock="Left" Content="Abrir arquivo errors" Style="{StaticResource Btn.Ghost}"/>
+      <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="Fechar" Style="{StaticResource Btn.Primary}" Margin="8,0,0,0"/>
+      <Button x:Name="CopyButton" DockPanel.Dock="Right" Content="Copiar registro"/>
+    </DockPanel>
+    <TextBox x:Name="RecordBox" Style="{StaticResource CodeBox}" TextWrapping="Wrap" Margin="0,12,0,0"/>
+  </DockPanel>
+</Window>

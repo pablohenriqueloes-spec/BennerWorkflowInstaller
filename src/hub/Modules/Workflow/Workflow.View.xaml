@@ -221,6 +221,15 @@
               </DataGridTemplateColumn>
               <DataGridTextColumn Header="Conta de logon" Binding="{Binding [StartName]}" IsReadOnly="True" Width="170" MinWidth="110" ElementStyle="{StaticResource CellMono}"/>
               <DataGridTextColumn Header="Pasta do executável" Binding="{Binding [Folder]}" IsReadOnly="True" Width="340" MinWidth="180" ElementStyle="{StaticResource CellMono}"/>
+              <DataGridTemplateColumn Header="Erro" Width="280" MinWidth="120" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Button Style="{StaticResource Btn.Cell}" IsEnabled="{Binding [HasError]}" ToolTip="{Binding [ErrorTip]}">
+                      <TextBlock Text="{Binding [ErrorSummary]}" TextTrimming="CharacterEllipsis"/>
+                    </Button>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
               <DataGridTemplateColumn Header="Resultado" Width="Auto" MinWidth="130" IsReadOnly="True">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate>

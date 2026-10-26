@@ -136,6 +136,38 @@ function Write-HubLog {
     [System.IO.File]::AppendAllText($Path, $line + [Environment]::NewLine, [System.Text.Encoding]::UTF8)
 }
 
+function Read-HubFileTail {
+    <#
+    Le no maximo os ultimos -MaxBytes do arquivo (compartilhado com quem esta gravando) e
+    devolve Text e Partial ($true quando o inicio do arquivo ficou de fora).
+    Codificacao: BOM UTF-8/UTF-16 quando houver; senao UTF-8, ou ANSI se nao for UTF-8 valido.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [long]$MaxBytes = 1MB)
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, ([System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete))
+    try {
+        $len = $fs.Length
+        $head = New-Object byte[] ([Math]::Min(3, $len))
+        [void]$fs.Read($head, 0, $head.Length)
+        $start = [Math]::Max(0, $len - $MaxBytes)
+        [void]$fs.Seek($start, [System.IO.SeekOrigin]::Begin)
+        $buf = New-Object byte[] ($len - $start)
+        $read = 0
+        while ($read -lt $buf.Length) { $n = $fs.Read($buf, $read, $buf.Length - $read); if ($n -le 0) { break }; $read += $n }
+    } finally { $fs.Dispose() }
+    $offset = 0
+    if ($head.Length -ge 2 -and $head[0] -eq 0xFF -and $head[1] -eq 0xFE) {
+        if ($start -eq 0) { $offset = 2 } elseif ($start % 2 -ne 0) { $offset = 1 }
+        $text = [System.Text.Encoding]::Unicode.GetString($buf, $offset, $read - $offset)
+    } else {
+        if ($start -eq 0 -and $head.Length -ge 3 -and $head[0] -eq 0xEF -and $head[1] -eq 0xBB -and $head[2] -eq 0xBF) { $offset = 3 }
+        # Corte no meio de um caractere UTF-8: pula os bytes de continuacao iniciais.
+        if ($start -gt 0) { while ($offset -lt $read -and ($buf[$offset] -band 0xC0) -eq 0x80) { $offset++ } }
+        try { $text = (New-Object System.Text.UTF8Encoding($false, $true)).GetString($buf, $offset, $read - $offset) }
+        catch { $text = [System.Text.Encoding]::Default.GetString($buf, $offset, $read - $offset) }
+    }
+    return [pscustomobject]@{ Text = $text; Partial = ($start -gt 0); Length = $len }
+}
+
 # ---------------------------------------------------------------------------
 # Ambiente
 # ---------------------------------------------------------------------------
