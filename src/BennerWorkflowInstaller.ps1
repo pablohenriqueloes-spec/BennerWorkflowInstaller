@@ -143,6 +143,115 @@ function New-Panel([int]$x,[int]$y,[int]$w,[int]$h) {
     $p.SetBounds($x,$y,$w,$h); $p.BackColor=$script:White
     $p.BorderStyle='FixedSingle'; return $p
 }
+function New-SearchBox([int]$x,[int]$y,[int]$w) {
+    $t=New-Object System.Windows.Forms.TextBox
+    $t.SetBounds($x,$y,$w,24)
+    $t.BackColor=[System.Drawing.Color]::FromArgb(35,43,57)
+    $t.ForeColor=$script:Ink; $t.BorderStyle='FixedSingle'
+    # Esc limpa a pesquisa.
+    $t.Add_KeyDown({param($s,$e) if($e.KeyCode -eq 'Escape'){$s.Clear();$e.SuppressKeyPress=$true}})
+    return $t
+}
+function New-AlertLabel([int]$x,[int]$y,[int]$w) {
+    $l=New-Label '' $x $y $w 22 $true
+    $l.ForeColor=[System.Drawing.Color]::FromArgb(255,184,77)
+    $l.AutoEllipsis=$true; $l.Visible=$false
+    return $l
+}
+
+# Pesquisa "like": trecho contido em qualquer coluna de texto, sem diferenciar maiusculas.
+# % ou * no termo funcionam como curinga (ex.: OCI%PRJ). Filtrar nao desmarca linhas ocultas.
+function Apply-GridFilter($g,[string]$term) {
+    $term=$term.Trim()
+    [void]$g.EndEdit()
+    try { $g.CurrentCell=$null } catch {}
+    $pattern=$null
+    if($term -match '[%*]'){
+        $pattern='*'+((($term -split '[%*]') | ForEach-Object { [System.Management.Automation.WildcardPattern]::Escape($_) }) -join '*')+'*'
+    }
+    foreach($row in $g.Rows){
+        if($term.Length -eq 0){$row.Visible=$true;continue}
+        $hit=$false
+        foreach($cell in $row.Cells){
+            if($cell.OwningColumn -is [System.Windows.Forms.DataGridViewCheckBoxColumn]){continue}
+            $v=[string]$cell.Value
+            if($null -ne $pattern){ if($v -like $pattern){$hit=$true;break} }
+            elseif($v.IndexOf($term,[StringComparison]::OrdinalIgnoreCase) -ge 0){$hit=$true;break}
+        }
+        $row.Visible=$hit
+    }
+}
+function Get-CheckedRows($g,[string]$column) {
+    return @($g.Rows | Where-Object { $_.Cells[$column].Value -eq $true })
+}
+# Alerta visivel quando mais de 2 servicos estao marcados (ou ha marcados ocultos pelo filtro).
+function Update-AlertLabel($label,[object[]]$groups) {
+    if($null -eq $label){return}
+    $parts=New-Object 'System.Collections.Generic.List[string]'
+    $show=$false
+    foreach($grp in $groups){
+        $rows=@($grp.Rows)
+        if($rows.Count -eq 0){continue}
+        $hidden=@($rows | Where-Object { -not $_.Visible }).Count
+        if($rows.Count -gt 2 -or $hidden -gt 0){$show=$true}
+        $text="$($rows.Count) servico(s) em $($grp.Name)"
+        if($hidden -gt 0){$text+=" ($hidden oculto(s) pelo filtro)"}
+        $parts.Add($text)
+    }
+    $label.Visible=$show
+    $label.Text=$(if($show){'ATENCAO: '+($parts -join '  |  ')}else{''})
+}
+# Texto acrescentado as confirmacoes de acoes em lote.
+function Get-BulkNote([int]$count,[int]$hidden) {
+    $note=''
+    if($count -gt 2){$note+="ATENCAO: $count servicos serao afetados por esta acao.`r`n`r`n"}
+    if($hidden -gt 0){$note+="$hidden deles estao ocultos pelo filtro de pesquisa atual.`r`n`r`n"}
+    return $note
+}
+
+# Checkbox "marcar todos" no cabecalho das colunas de selecao.
+# Marca/desmarca somente as linhas visiveis (respeita a pesquisa).
+$script:HeaderChecks=New-Object System.Collections.ArrayList
+$script:BulkUpdate=$false
+$script:ToolTip=New-Object System.Windows.Forms.ToolTip
+function Add-HeaderCheck($g,[string]$column,[scriptblock]$after) {
+    $box=New-Object System.Windows.Forms.CheckBox
+    $box.Size=New-Object System.Drawing.Size(15,15)
+    $box.BackColor=[System.Drawing.Color]::FromArgb(38,46,62)
+    $box.Cursor='Hand'; $box.TabStop=$false
+    $g.Columns[$column].HeaderCell.Style.Padding=New-Object System.Windows.Forms.Padding(20,0,0,0)
+    $entry=[pscustomobject]@{Grid=$g;Column=$column;Box=$box;After=$after}
+    $box.Tag=$entry
+    $box.Add_Click({param($s,$e) Set-ColumnChecked $s.Tag $s.Checked})
+    $script:ToolTip.SetToolTip($box,'Marcar/desmarcar todas as linhas visiveis (respeita a pesquisa)')
+    $g.Controls.Add($box)
+    [void]$script:HeaderChecks.Add($entry)
+}
+function Set-ColumnChecked($entry,[bool]$state) {
+    $g=$entry.Grid
+    if($g.ReadOnly){Sync-HeaderChecks;return}
+    [void]$g.EndEdit()
+    $script:BulkUpdate=$true
+    try { foreach($row in $g.Rows){ if($row.Visible){$row.Cells[$entry.Column].Value=$state} } }
+    finally { $script:BulkUpdate=$false }
+    & $entry.After
+}
+function Sync-HeaderChecks {
+    foreach($h in $script:HeaderChecks){
+        $visible=@($h.Grid.Rows | Where-Object { $_.Visible })
+        $checked=@($visible | Where-Object { $_.Cells[$h.Column].Value -eq $true }).Count
+        $h.Box.Checked=($visible.Count -gt 0 -and $checked -eq $visible.Count)
+        $h.Box.Enabled=(-not $h.Grid.ReadOnly)
+    }
+}
+function Place-HeaderChecks {
+    foreach($h in $script:HeaderChecks){
+        $r=$h.Grid.GetCellDisplayRectangle($h.Grid.Columns[$h.Column].Index,-1,$true)
+        if($r.Width -lt 22){$h.Box.Visible=$false;continue}
+        $h.Box.Location=New-Object System.Drawing.Point(($r.X+4),($r.Y+[int](($r.Height-15)/2)))
+        $h.Box.Visible=$true
+    }
+}
 function Safe-Name([string]$name) {
     return (-not [string]::IsNullOrWhiteSpace($name)) -and $name.Length -le 230 -and ($name -match '^[a-zA-Z0-9_.-]+$')
 }
@@ -151,16 +260,21 @@ function Default-Name([string]$first,[string]$second) {
     return $second
 }
 function Update-Selection {
-    $count=0
-    foreach($row in $grid.Rows){ if($row.Cells['Install'].Value -eq $true){ $count++ } }
-    $selectedCount.Text = "$count selecionado(s)"
+    $installRows=@(Get-CheckedRows $grid 'Install')
+    $unlockRows=@(Get-CheckedRows $grid 'Unlock')
+    $count=$installRows.Count
+    $hidden=@($installRows | Where-Object { -not $_.Visible }).Count
+    $selectedCount.Text = $(if($hidden -gt 0){"$count selecionado(s), $hidden oculto(s)"}else{"$count selecionado(s)"})
     $summary.Text = "$count servico(s) selecionado(s) para instalacao"
+    $summary.ForeColor = $(if($count -gt 2){[System.Drawing.Color]::FromArgb(255,184,77)}else{$script:Ink})
     $installButton.Enabled = ($count -gt 0 -and -not $script:Installing -and -not $script:Unlocking -and -not $script:EditingConfig)
     if($null -ne $editConfigButton){$editConfigButton.Enabled=($count -gt 0 -and -not $script:Installing -and -not $script:Unlocking -and -not $script:EditingConfig)}
     if($null -ne $initialConfigButton){$initialConfigButton.Enabled=($count -gt 0 -and -not $script:Installing -and -not $script:Unlocking -and -not $script:EditingConfig)}
     if($null -ne $unlockButton){
-        $unlockButton.Enabled = ((@($grid.Rows | Where-Object { $_.Cells['Unlock'].Value -eq $true }).Count -gt 0) -and -not $script:Installing -and -not $script:Unlocking)
+        $unlockButton.Enabled = ($unlockRows.Count -gt 0 -and -not $script:Installing -and -not $script:Unlocking)
     }
+    Update-AlertLabel $listAlert @([pscustomobject]@{Name='Instalar/.config';Rows=$installRows},[pscustomobject]@{Name='Desbloquear';Rows=$unlockRows})
+    Sync-HeaderChecks
     Update-Preview
 }
 function Update-Preview {
@@ -215,10 +329,9 @@ function Scan-Directories {
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Erro ao buscar pastas','OK','Error') | Out-Null
         return
     }
-    $foundLabel.Text="$($grid.Rows.Count) servico(s) encontrado(s)"
     $progressBar.Value=0
     $progressLabel.Text='Busca concluida'
-    Update-Selection
+    Apply-FoundFilter
     if($errors.Count -gt 0) {
         [System.Windows.Forms.MessageBox]::Show(('Algumas pastas nao puderam ser consultadas:'+[Environment]::NewLine+($errors -join [Environment]::NewLine)),'Busca parcial','OK','Warning') | Out-Null
     }
@@ -291,7 +404,7 @@ $form.BackColor=$script:Back; $form.Font=$script:Font
 $form.AutoScaleMode='Dpi'; $form.KeyPreview=$true
 # Todos os blocos ficam em $canvas, dentro de um painel com rolagem.
 $script:CanvasMinWidth=1082
-$script:CanvasMinHeight=1000
+$script:CanvasMinHeight=1025
 $scrollHost=New-Object System.Windows.Forms.Panel
 $scrollHost.Dock='Fill'; $scrollHost.AutoScroll=$true; $scrollHost.BackColor=$script:Back
 $canvas=New-Object System.Windows.Forms.Panel
@@ -351,13 +464,13 @@ $sample.ForeColor=$script:Muted
 $settings.Controls.AddRange(@($checkboxPrefix,$sample));$canvas.Controls.Add($settings)
 
 $listPanel=New-Panel 18 235 1046 332
-$listTitle=New-Label 'Servicos encontrados' 15 12 300 23 $true
-$foundLabel=New-Label '0 servico(s) encontrado(s)' 300 12 245 23
+$listTitle=New-Label 'Servicos encontrados' 15 12 170 23 $true
+$foundLabel=New-Label '0 servico(s) encontrado(s)' 190 12 380 23
 $foundLabel.ForeColor=$script:Muted
 $markAll=New-Button 'Marcar todos' 704 7 148 30
 $unmarkAll=New-Button 'Desmarcar todos' 865 7 164 30
 $grid=New-Object System.Windows.Forms.DataGridView
-$grid.SetBounds(15,48,1014,266)
+$grid.SetBounds(15,78,1014,236)
 $grid.Anchor='Top,Bottom,Left,Right'
 $grid.AllowUserToAddRows=$false; $grid.AllowUserToDeleteRows=$false
 $grid.AllowUserToResizeRows=$false; $grid.RowHeadersVisible=$false
@@ -381,9 +494,9 @@ $grid.DefaultCellStyle.SelectionBackColor=[System.Drawing.Color]::FromArgb(60,70
 $grid.DefaultCellStyle.SelectionForeColor=$script:Ink
 $grid.AlternatingRowsDefaultCellStyle.BackColor=[System.Drawing.Color]::FromArgb(29,36,50)
 $colCheck=New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
-$colCheck.Name='Install';$colCheck.HeaderText='Instalar';$colCheck.FillWeight=9
+$colCheck.Name='Install';$colCheck.HeaderText='Instalar';$colCheck.FillWeight=13;$colCheck.MinimumWidth=78
 $colUnlock=New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
-$colUnlock.Name='Unlock';$colUnlock.HeaderText='Desbloquear';$colUnlock.FillWeight=14
+$colUnlock.Name='Unlock';$colUnlock.HeaderText='Desbloquear';$colUnlock.FillWeight=17;$colUnlock.MinimumWidth=104
 $colFirst=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colFirst.Name='First';$colFirst.HeaderText='VARIAVEL1';$colFirst.FillWeight=17;$colFirst.ReadOnly=$true
 $colSecond=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
@@ -403,18 +516,32 @@ $colStatus.Name='Status';$colStatus.HeaderText='Resultado';$colStatus.FillWeight
 $colUnlockStatus=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colUnlockStatus.Name='UnlockStatus';$colUnlockStatus.HeaderText='Desbloqueio';$colUnlockStatus.FillWeight=18;$colUnlockStatus.ReadOnly=$true
 [void]$grid.Columns.AddRange([System.Windows.Forms.DataGridViewColumn[]]@($colCheck,$colUnlock,$colFirst,$colSecond,$colName,$colHost,$colSystem,$colUser,$colNotify,$colStatus,$colUnlockStatus))
-$listPanel.Controls.AddRange(@($listTitle,$foundLabel,$markAll,$unmarkAll,$grid));$canvas.Controls.Add($listPanel)
+$gridSearchLabel=New-Label 'Pesquisar' 15 46 70 22
+$gridSearch=New-SearchBox 88 44 300
+$script:ToolTip.SetToolTip($gridSearch,'Filtra por trecho em qualquer coluna (sem diferenciar maiusculas). Use % ou * como curinga. Esc limpa.')
+$listAlert=New-AlertLabel 402 46 627
+$listPanel.Controls.AddRange(@($listTitle,$foundLabel,$markAll,$unmarkAll,$gridSearchLabel,$gridSearch,$listAlert,$grid));$canvas.Controls.Add($listPanel)
+Add-HeaderCheck $grid 'Install' {Update-Selection}
+Add-HeaderCheck $grid 'Unlock' {Update-Selection}
+function Apply-FoundFilter {
+    Apply-GridFilter $grid $gridSearch.Text
+    $total=$grid.Rows.Count
+    $shown=@($grid.Rows | Where-Object { $_.Visible }).Count
+    $foundLabel.Text=$(if($shown -ne $total){"$total servico(s) encontrado(s)  |  $shown exibido(s) pela pesquisa"}else{"$total servico(s) encontrado(s)"})
+    Update-Selection
+}
+$gridSearch.Add_TextChanged({Apply-FoundFilter})
 
 
 # Grade independente para gerenciar Workflow Services instalados.
-$installedPanel=New-Panel 18 837 1046 239
+$installedPanel=New-Panel 18 837 1046 264
 $installedTitle=New-Label 'Workflow Services instalados no Windows' 15 9 480 24 $true
 $refreshServices=New-Button 'Atualizar lista' 628 7 128 29
 $removeServices=New-Button 'Remover selecionados' 766 7 264 29 $true
 $removeServices.Enabled=$false
 $removeServices.BackColor=[System.Drawing.Color]::FromArgb(166,38,55)
 $installedGrid=New-Object System.Windows.Forms.DataGridView
-$installedGrid.SetBounds(15,87,1014,138)
+$installedGrid.SetBounds(15,112,1014,138)
 $installedGrid.Anchor='Top,Bottom,Left,Right'
 $installedGrid.AllowUserToAddRows=$false;$installedGrid.AllowUserToDeleteRows=$false
 $installedGrid.RowHeadersVisible=$false;$installedGrid.AllowUserToResizeRows=$false
@@ -432,8 +559,8 @@ $installedGrid.DefaultCellStyle.SelectionForeColor=$script:Ink
 $installedGrid.GridColor=$script:Border
 $ic1=New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
 $icLogin=New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
-$icLogin.Name='LoginSel';$icLogin.HeaderText='Login';$icLogin.FillWeight=9
-$ic1.Name='Remove';$ic1.HeaderText='Remover';$ic1.FillWeight=10
+$icLogin.Name='LoginSel';$icLogin.HeaderText='Login';$icLogin.FillWeight=12;$icLogin.MinimumWidth=66
+$ic1.Name='Remove';$ic1.HeaderText='Remover';$ic1.FillWeight=14;$ic1.MinimumWidth=86
 $ic2=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $ic2.Name='WinName';$ic2.HeaderText='Nome interno';$ic2.FillWeight=29;$ic2.ReadOnly=$true
 $ic3=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
@@ -458,8 +585,27 @@ $passwordBox.BorderStyle='FixedSingle'
 $changeLogin=New-Button 'Alterar login selecionados' 723 40 307 30 $true
 $changeLogin.Enabled=$false
 $changeLogin.BackColor=[System.Drawing.Color]::FromArgb(43,112,199)
-$installedPanel.Controls.AddRange(@($installedTitle,$refreshServices,$removeServices,$accountLabel,$accountBox,$passwordLabel,$passwordBox,$changeLogin,$installedGrid))
+$installedSearchLabel=New-Label 'Pesquisar' 15 81 70 22
+$installedSearch=New-SearchBox 88 79 300
+$script:ToolTip.SetToolTip($installedSearch,'Filtra por trecho em qualquer coluna (sem diferenciar maiusculas). Use % ou * como curinga. Esc limpa.')
+$installedAlert=New-AlertLabel 402 81 627
+$installedPanel.Controls.AddRange(@($installedTitle,$refreshServices,$removeServices,$accountLabel,$accountBox,$passwordLabel,$passwordBox,$changeLogin,$installedSearchLabel,$installedSearch,$installedAlert,$installedGrid))
 $canvas.Controls.Add($installedPanel)
+Add-HeaderCheck $installedGrid 'LoginSel' {Update-RemoveButton}
+Add-HeaderCheck $installedGrid 'Remove' {Update-RemoveButton}
+function Apply-InstalledFilter {
+    Apply-GridFilter $installedGrid $installedSearch.Text
+    $shown=@($installedGrid.Rows | Where-Object { $_.Visible }).Count
+    $installedTitle.Text=$(if($shown -ne $installedGrid.Rows.Count){"Workflow Services instalados no Windows ($shown de $($installedGrid.Rows.Count))"}else{"Workflow Services instalados no Windows ($($installedGrid.Rows.Count))"})
+    Update-RemoveButton
+}
+$installedSearch.Add_TextChanged({Apply-InstalledFilter})
+foreach($g in @($grid,$installedGrid)){
+    $g.Add_ColumnWidthChanged({Place-HeaderChecks})
+    $g.Add_Scroll({Place-HeaderChecks})
+    $g.Add_SizeChanged({Place-HeaderChecks})
+    $g.Add_ReadOnlyChanged({Sync-HeaderChecks})
+}
 
 function Get-WinExePath([string]$binaryPath) {
     if([string]::IsNullOrWhiteSpace($binaryPath)){return $null}
@@ -481,12 +627,10 @@ function Refresh-Installed {
             $ix=$installedGrid.Rows.Add($false,$false,[string]$svc.Name,[string]$svc.DisplayName,[string]$svc.State,$folder,'')
             $installedGrid.Rows[$ix].Tag=[pscustomobject]@{ Name=[string]$svc.Name; Display=[string]$svc.DisplayName; Exe=$exe; Folder=$folder }
         }
-        $installedTitle.Text="Workflow Services instalados no Windows ($($items.Count))"
     } catch {
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Falha consultando servicos','OK','Error') | Out-Null
     }
-    $removeServices.Enabled=$false
-    $changeLogin.Enabled=$false
+    Apply-InstalledFilter
 }
 function Is-SafeRemovalFolder([string]$folder,[string]$exe,[string]$root) {
     if([string]::IsNullOrWhiteSpace($folder) -or [string]::IsNullOrWhiteSpace($root)){return $false}
@@ -509,11 +653,16 @@ function Is-SafeRemovalFolder([string]$folder,[string]$exe,[string]$root) {
     } catch {return $false}
 }
 function Update-RemoveButton {
-    $changeLogin.Enabled=(-not $script:Installing -and -not $script:Unlocking -and -not $script:Removing -and -not $script:ChangingLogin -and @($installedGrid.Rows | Where-Object { $_.Cells['LoginSel'].Value -eq $true }).Count -gt 0)
-    $removeServices.Enabled=(-not $script:Installing -and -not $script:Unlocking -and -not $script:Removing -and -not $script:ChangingLogin -and @($installedGrid.Rows | Where-Object { $_.Cells['Remove'].Value -eq $true }).Count -gt 0)
+    $loginRows=@(Get-CheckedRows $installedGrid 'LoginSel')
+    $removeRows=@(Get-CheckedRows $installedGrid 'Remove')
+    $idle=(-not $script:Installing -and -not $script:Unlocking -and -not $script:Removing -and -not $script:ChangingLogin)
+    $changeLogin.Enabled=($idle -and $loginRows.Count -gt 0)
+    $removeServices.Enabled=($idle -and $removeRows.Count -gt 0)
+    Update-AlertLabel $installedAlert @([pscustomobject]@{Name='Login';Rows=$loginRows},[pscustomobject]@{Name='Remover';Rows=$removeRows})
+    Sync-HeaderChecks
 }
 $installedGrid.Add_CurrentCellDirtyStateChanged({if($installedGrid.IsCurrentCellDirty){$installedGrid.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit) | Out-Null}})
-$installedGrid.Add_CellValueChanged({Update-RemoveButton})
+$installedGrid.Add_CellValueChanged({if($script:BulkUpdate){return};Update-RemoveButton})
 $refreshServices.Add_Click({Refresh-Installed})
 $removeServices.Add_Click({
     $installedGrid.EndEdit() | Out-Null
@@ -531,7 +680,8 @@ $removeServices.Add_Click({
     }
     if($issues.Count -gt 0){[System.Windows.Forms.MessageBox]::Show(($issues -join "`r`n"),'Remocao bloqueada','OK','Warning') | Out-Null;return}
     $detail=($targets | ForEach-Object {"$($_.Tag.Name)  ->  $($_.Tag.Folder)"}) -join "`r`n"
-    $msg="ATENCAO: remocao PERMANENTE de $($targets.Count) servico(s) E suas pastas:`r`n`r`n$detail`r`n`r`nIsso nao pode ser desfeito. Continuar?"
+    $bulk=Get-BulkNote $targets.Count (@($targets | Where-Object { -not $_.Visible }).Count)
+    $msg=$bulk+"ATENCAO: remocao PERMANENTE de $($targets.Count) servico(s) E suas pastas:`r`n`r`n$detail`r`n`r`nIsso nao pode ser desfeito. Continuar?"
     if([System.Windows.Forms.MessageBox]::Show($msg,'Confirmar exclusao de servicos e arquivos','YesNo','Warning',[System.Windows.Forms.MessageBoxDefaultButton]::Button2) -ne 'Yes'){return}
     $script:Removing=$true
     $changeLogin.Enabled=$false
@@ -600,7 +750,8 @@ $changeLogin.Add_Click({
         [System.Windows.Forms.MessageBox]::Show('Informe a senha da conta. A senha nao sera salva nos logs.','Senha necessaria','OK','Warning') | Out-Null;return
     }
     $names=($targets | ForEach-Object { $_.Tag.Name }) -join "`r`n"
-    $question="Alterar a conta de logon de $($targets.Count) servico(s) para $account ?`r`n`r`n$names`r`n`r`nOs servicos em execucao precisam ser reiniciados para utilizar a nova conta."
+    $bulk=Get-BulkNote $targets.Count (@($targets | Where-Object { -not $_.Visible }).Count)
+    $question=$bulk+"Alterar a conta de logon de $($targets.Count) servico(s) para $account ?`r`n`r`n$names`r`n`r`nOs servicos em execucao precisam ser reiniciados para utilizar a nova conta."
     if([System.Windows.Forms.MessageBox]::Show($question,'Confirmar alteracao de login','YesNo','Question',[System.Windows.Forms.MessageBoxDefaultButton]::Button2) -ne 'Yes'){return}
     $script:ChangingLogin=$true
     $changeLogin.Enabled=$false;$removeServices.Enabled=$false;$refreshServices.Enabled=$false
@@ -738,7 +889,9 @@ function Resize-Layout {
     $previewPanel.Top=$footer.Top-$previewPanel.Height-12
     $listPanel.Top=235
     $listPanel.Height=[Math]::Max(250,$previewPanel.Top-$listPanel.Top-12)
-    $grid.Height=$listPanel.Height-66
+    $grid.Height=$listPanel.Height-96
+    $listAlert.Width=$w-432;$installedAlert.Width=$w-432
+    Place-HeaderChecks
 }
 $scrollHost.Add_Resize({ Resize-Layout })
 $browseButton.Add_Click({
@@ -758,7 +911,7 @@ $checkboxPrefix.Add_CheckedChanged({
 })
 $grid.Add_CurrentCellDirtyStateChanged({if($grid.IsCurrentCellDirty){$grid.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit) | Out-Null}})
 $grid.Add_CellValueChanged({param($sender,$e)
-    if($e.RowIndex -lt 0){return}
+    if($script:BulkUpdate -or $e.RowIndex -lt 0){return}
     if($e.ColumnIndex -eq $grid.Columns['ServiceName'].Index){
         $row=$grid.Rows[$e.RowIndex]
         if($row.Tag){
@@ -768,8 +921,9 @@ $grid.Add_CellValueChanged({param($sender,$e)
     }
     Update-Selection
 })
-$markAll.Add_Click({foreach($row in $grid.Rows){$row.Cells['Install'].Value=$true};Update-Selection})
-$unmarkAll.Add_Click({foreach($row in $grid.Rows){$row.Cells['Install'].Value=$false};Update-Selection})
+# Botoes equivalem a flag do cabecalho da coluna Instalar: atuam so nas linhas visiveis.
+$markAll.Add_Click({Set-ColumnChecked $script:HeaderChecks[0] $true})
+$unmarkAll.Add_Click({Set-ColumnChecked $script:HeaderChecks[0] $false})
 $logsButton.Add_Click({
     if(-not (Test-Path $script:LogDirectory)){New-Item -ItemType Directory -Path $script:LogDirectory -Force | Out-Null}
     Start-Process explorer.exe -ArgumentList ('"{0}"' -f $script:LogDirectory)
@@ -792,7 +946,8 @@ $unlockButton.Add_Click({
         }
     }
     if($jobs.Count -eq 0){return}
-    $msg="Desbloquear arquivos de $($jobs.Count) pasta(s) Workflow (incluindo subpastas)?`r`n`r`nIsto remove o marcador de origem da Internet (Zone.Identifier) dos arquivos encontrados. Nao remove bloqueios de processos ou permissoes NTFS.`r`n`r`nContinuar?"
+    $bulk=Get-BulkNote $jobs.Count (@($jobs | Where-Object { -not $grid.Rows[$_.Index].Visible }).Count)
+    $msg=$bulk+"Desbloquear arquivos de $($jobs.Count) pasta(s) Workflow (incluindo subpastas)?`r`n`r`nIsto remove o marcador de origem da Internet (Zone.Identifier) dos arquivos encontrados. Nao remove bloqueios de processos ou permissoes NTFS.`r`n`r`nContinuar?"
     if([System.Windows.Forms.MessageBox]::Show($msg,'Confirmar desbloqueio','YesNo','Warning') -ne 'Yes'){return}
     try {New-Item -ItemType Directory -Path $script:LogDirectory -Force -ErrorAction Stop | Out-Null} catch {
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Erro criando logs','OK','Error') | Out-Null;return
@@ -1059,7 +1214,8 @@ $editConfigButton.Add_Click({
     }
     $fromModel=@($tasks | Where-Object {(Get-ConfigState $_.Exe) -eq 'modelo'})
     $modelNote=$(if($fromModel.Count -gt 0){"`r`n`r`n$($fromModel.Count) linha(s) ainda sem .config: o arquivo sera gerado a partir do .config.modelo, como o Configurar faz no primeiro salvamento."}else{''})
-    if([System.Windows.Forms.MessageBox]::Show("Editar o .config de $($tasks.Count) linha(s) selecionada(s), sem instalar servicos? Sera criado backup de cada arquivo existente.$modelNote",'Confirmar edicao .config','YesNo','Question') -ne 'Yes'){return}
+    $bulk=Get-BulkNote $tasks.Count (@($tasks | Where-Object { -not $grid.Rows[$_.Index].Visible }).Count)
+    if([System.Windows.Forms.MessageBox]::Show($bulk+"Editar o .config de $($tasks.Count) linha(s) selecionada(s), sem instalar servicos? Sera criado backup de cada arquivo existente.$modelNote",'Confirmar edicao .config','YesNo','Question') -ne 'Yes'){return}
     try {New-Item -ItemType Directory -Path $script:LogDirectory -Force -ErrorAction Stop|Out-Null}
     catch {[System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Falha de log','OK','Error')|Out-Null;return}
     $log=Join-Path $script:LogDirectory ('Workflow_EdicaoConfig_{0}.log' -f (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
@@ -1120,7 +1276,8 @@ $installButton.Add_Click({
     if($noConfig.Count -gt 0){
         $noConfigNote+="`r`n`r`nATENCAO: $($noConfig.Count) linha(s) nao tem .config nem .config.modelo e serao instaladas SEM editar a configuracao:`r`n"+(($noConfig | ForEach-Object { $_.Name }) -join "`r`n")
     }
-    $confirm="Instalar $($tasks.Count) servico(s) Workflow no Windows?`r`n`r`nAntes de instalar, o .config existente de cada servico sera atualizado e recebera um backup. Instalacoes sequenciais nao sao revertidas automaticamente em caso de falha.$noConfigNote`r`n`r`nDeseja continuar?"
+    $bulk=Get-BulkNote $tasks.Count (@($tasks | Where-Object { -not $grid.Rows[$_.Index].Visible }).Count)
+    $confirm=$bulk+"Instalar $($tasks.Count) servico(s) Workflow no Windows?`r`n`r`nAntes de instalar, o .config existente de cada servico sera atualizado e recebera um backup. Instalacoes sequenciais nao sao revertidas automaticamente em caso de falha.$noConfigNote`r`n`r`nDeseja continuar?"
     if([System.Windows.Forms.MessageBox]::Show($confirm,'Confirmar instalacao','YesNo','Question') -ne 'Yes'){return}
     try {New-Item -ItemType Directory -Path $script:LogDirectory -Force -ErrorAction Stop | Out-Null} catch {
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Falha criando pasta de logs','OK','Error') | Out-Null;return
@@ -1138,6 +1295,7 @@ $form.Add_FormClosing({param($sender,$e)
     if($script:Installing -or $script:Unlocking -or $script:Removing -or $script:EditingConfig){$e.Cancel=$true;[System.Windows.Forms.MessageBox]::Show('Aguarde o fim do lote antes de fechar.','Instalacao em andamento','OK','Information') | Out-Null}
 })
 Resize-Layout
+$form.Add_Shown({Place-HeaderChecks;Sync-HeaderChecks})
 Refresh-Installed
 if(Test-Path -LiteralPath $pathBox.Text -PathType Container){Scan-Directories}
 [void]$form.ShowDialog()
