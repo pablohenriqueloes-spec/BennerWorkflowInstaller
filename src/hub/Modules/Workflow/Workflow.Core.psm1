@@ -433,23 +433,30 @@ function ConvertFrom-WorkflowErrorLog {
 
 function Get-WorkflowLastError {
     <#
-    Ultimo registro "Categoria: Error" (pela Data/Hora) do arquivo errors da pasta do servico.
-    Le so o fim do arquivo (1 MB, ampliando ate 32 MB se nao achar erro). Devolve um objeto com
-    Status: 'erro' (registro em Text/Timestamp/Message), 'sem-erros' ou 'sem-arquivo'.
+    Ultimos registros "Categoria: Error" (ate -Count, padrao 10) do arquivo errors da pasta do
+    servico, do mais recente para o mais antigo pela Data/Hora. Le so o fim do arquivo (1 MB,
+    ampliando ate 32 MB enquanto faltarem registros). Devolve um objeto com Status: 'erro',
+    'sem-erros' ou 'sem-arquivo'. Records traz os registros; Timestamp/Message/Text sao do mais
+    recente; AllText junta todos, separados como no arquivo.
     #>
-    param([string]$Folder)
+    param([string]$Folder, [int]$Count = 10)
+    $empty = @{ Timestamp = $null; Message = ''; Text = ''; AllText = ''; Records = @() }
     $file = Get-WorkflowErrorFile -Folder $Folder
-    if ($null -eq $file) { return [pscustomobject]@{ Status = 'sem-arquivo'; File = $null; Timestamp = $null; Message = ''; Text = '' } }
+    if ($null -eq $file) { return [pscustomobject](@{ Status = 'sem-arquivo'; File = $null } + $empty) }
+    $records = @()
     foreach ($size in @(1MB, 8MB, 32MB)) {
         $tail = Read-HubFileTail -Path $file.FullName -MaxBytes $size
         $records = @(ConvertFrom-WorkflowErrorLog -Text $tail.Text -Partial $tail.Partial)
-        if ($records.Count -gt 0) {
-            $last = $records | Sort-Object @{ Expression = { if ($_.Timestamp) { $_.Timestamp } else { [datetime]::MinValue } } }, Index | Select-Object -Last 1
-            return [pscustomobject]@{ Status = 'erro'; File = $file.FullName; Timestamp = $last.Timestamp; Message = $last.Message; Text = $last.Text }
-        }
-        if (-not $tail.Partial) { break }
+        if ($records.Count -ge $Count -or -not $tail.Partial) { break }
     }
-    return [pscustomobject]@{ Status = 'sem-erros'; File = $file.FullName; Timestamp = $null; Message = ''; Text = '' }
+    if ($records.Count -eq 0) { return [pscustomobject](@{ Status = 'sem-erros'; File = $file.FullName } + $empty) }
+    $sorted = @($records | Sort-Object @{ Expression = { if ($_.Timestamp) { $_.Timestamp } else { [datetime]::MinValue } } }, Index -Descending | Select-Object -First $Count)
+    $separator = [Environment]::NewLine + ('*' * 50) + [Environment]::NewLine
+    return [pscustomobject]@{
+        Status = 'erro'; File = $file.FullName; Records = $sorted
+        Timestamp = $sorted[0].Timestamp; Message = $sorted[0].Message; Text = $sorted[0].Text
+        AllText = (($sorted | ForEach-Object { $_.Text }) -join $separator)
+    }
 }
 
 # ---------------------------------------------------------------------------

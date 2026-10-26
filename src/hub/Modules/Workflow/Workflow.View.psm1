@@ -541,7 +541,7 @@ function Update-RowError($Row) {
         'erro' {
             $when = $(if ($err.Timestamp) { $err.Timestamp.ToString('dd/MM/yyyy HH:mm:ss') } else { 'sem data' })
             $Row['ErrorSummary'] = $(if ($err.Message) { "$when  $($err.Message)" } else { $when })
-            $Row['ErrorTip'] = "Clique para ver o registro completo`r`n$($err.File)"
+            $Row['ErrorTip'] = "Clique para ver os últimos $(@($err.Records).Count) erro(s)`r`n$($err.File)"
         }
         'sem-erros' { $Row['ErrorSummary'] = 'Sem erros registrados'; $Row['ErrorTip'] = $err.File }
         'sem-arquivo' { $Row['ErrorSummary'] = 'Sem arquivo errors'; $Row['ErrorTip'] = 'Nenhum arquivo errors na pasta do serviço' }
@@ -554,8 +554,10 @@ function Set-ErrorWindowContent($Entry, $Row) {
     $Entry.Record = $err
     $Entry.UI.ServiceText.Text = [string]$Row['Name']
     $when = $(if ($err.Timestamp) { $err.Timestamp.ToString('dd/MM/yyyy HH:mm:ss') } else { 'sem data' })
-    $Entry.UI.MetaText.Text = $(if ($err.Status -eq 'erro') { "$when  ·  $($err.File)" } else { [string]$Row['ErrorSummary'] })
-    $Entry.UI.RecordBox.Text = [string]$err.Text
+    $count = @($err.Records).Count
+    $Entry.UI.MetaText.Text = $(if ($err.Status -eq 'erro') { "$count registro(s), do mais recente ao mais antigo  ·  mais recente: $when  ·  $($err.File)" } else { [string]$Row['ErrorSummary'] })
+    $Entry.UI.RecordBox.Text = [string]$err.AllText
+    $Entry.UI.RecordBox.ScrollToHome()
     $Entry.UI.CopyButton.IsEnabled = ($err.Status -eq 'erro')
     $Entry.UI.OpenFileButton.IsEnabled = [bool]$err.File
 }
@@ -578,7 +580,7 @@ function Show-WorkflowErrorWindow($Row) {
     Set-ErrorWindowContent $entry $Row
     foreach ($b in $entry.UI.CopyButton, $entry.UI.OpenFileButton, $entry.UI.CloseButton) { $b.Tag = $name }
     $entry.UI.CloseButton.Add_Click({ param($s, $e) Invoke-HubSafe { $script:ErrorWindows[[string]$s.Tag].Window.Close() } })
-    $entry.UI.CopyButton.Add_Click({ param($s, $e) Invoke-HubSafe { [System.Windows.Clipboard]::SetText([string]$script:ErrorWindows[[string]$s.Tag].Record.Text) } })
+    $entry.UI.CopyButton.Add_Click({ param($s, $e) Invoke-HubSafe { [System.Windows.Clipboard]::SetText([string]$script:ErrorWindows[[string]$s.Tag].Record.AllText) } })
     $entry.UI.OpenFileButton.Add_Click({ param($s, $e) Invoke-HubSafe {
                 $file = [string]$script:ErrorWindows[[string]$s.Tag].Record.File
                 if ($file) { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"{0}"' -f $file) }

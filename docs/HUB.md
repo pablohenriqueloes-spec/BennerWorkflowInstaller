@@ -68,7 +68,7 @@ Set-WorkflowServiceLogon -Name $instalados[0].Name -Account 'DOMINIO\svc_wfl' -P
 Test-WorkflowServiceStart -Name $instalados[0].Name -LogFile $log
 ```
 
-Funções de apoio: `Get-WorkflowServiceName`, `Test-WorkflowServiceName`, `Get-WorkflowConfigState`, `Test-WorkflowConfigValues`, `Get-WorkflowInstallCommand`, `Get-WorkflowExistingServiceNames`, `Start-WorkflowInstall` e `Start-WorkflowUnblock` (versões assíncronas que devolvem o processo), `Write-WorkflowInstallResult`, `Find-WorkflowConfigurator`, `Test-WorkflowRemovalFolder`, `Test-WorkflowLogonInput`, `Get-WorkflowLastError` (último erro do arquivo `errors`), `Get-WorkflowErrorFile`, `ConvertFrom-WorkflowErrorLog`.
+Funções de apoio: `Get-WorkflowServiceName`, `Test-WorkflowServiceName`, `Get-WorkflowConfigState`, `Test-WorkflowConfigValues`, `Get-WorkflowInstallCommand`, `Get-WorkflowExistingServiceNames`, `Start-WorkflowInstall` e `Start-WorkflowUnblock` (versões assíncronas que devolvem o processo), `Write-WorkflowInstallResult`, `Find-WorkflowConfigurator`, `Test-WorkflowRemovalFolder`, `Test-WorkflowLogonInput`, `Get-WorkflowLastError` (últimos erros do arquivo `errors`), `Get-WorkflowErrorFile`, `ConvertFrom-WorkflowErrorLog`.
 
 O núcleo (`BennerHub.Core.psm1`) oferece o que não é específico do Workflow e pode servir a outros módulos: `New-HubLogFile`, `Write-HubLog`, `Start-HubPowerShellProcess`, `Get-HubServiceExePath`, `Get-HubServiceInfo`, `Set-HubServiceLogon`, `Grant-HubServiceLogonRight`, `Restart-HubService`, `Read-HubFileTail`, `Show-HubMessage`, `Invoke-HubSafe`, `New-HubTimer`, `Select-HubFolder`, `Test-HubRowMatch` e o tipo `BennerHub.HubRow` (linha observável para grades).
 
@@ -102,7 +102,7 @@ O HUB lista o módulo no menu na próxima abertura e só carrega o código quand
 - Status por linha em etiquetas coloridas (pronto, na fila, instalando, sucesso, falha).
 - Coluna nova **.config** na grade de instalação: mostra se o arquivo existe, se será gerado do modelo ou se está ausente.
 - Coluna nova **Conta de logon** na grade de serviços instalados.
-- Coluna nova **Erro** na grade de serviços instalados: mostra o último registro com `Categoria: Error` (pela Data/Hora) do arquivo `errors` da pasta do serviço. O botão de cada linha abre uma janela com o registro completo, que pode ser arrastada, minimizada, maximizada e fechada; clicar de novo na mesma linha restaura a janela já aberta. Só o fim do arquivo é lido (1 MB, ampliando até 32 MB se não houver erro nesse trecho).
+- Coluna nova **Erro** na grade de serviços instalados: resume o último registro com `Categoria: Error` (pela Data/Hora) do arquivo `errors` da pasta do serviço. O botão de cada linha abre uma janela com os até 10 últimos registros de erro, do mais recente ao mais antigo, que pode ser arrastada, minimizada, maximizada e fechada; clicar de novo na mesma linha restaura a janela já aberta. Só o fim do arquivo é lido (1 MB, ampliando até 32 MB enquanto faltarem registros).
 - O "marcar todos" no cabeçalho mostra estado parcial quando só parte das linhas visíveis está marcada.
 - A senha do login vem de um `PasswordBox` e vai ao Windows por memória protegida (`SecureString`), sem passar por string comum no PowerShell.
 - Ao fim de uma instalação, a lista de serviços instalados é atualizada sozinha.
