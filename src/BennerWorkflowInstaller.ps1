@@ -255,10 +255,21 @@ function Write-OutputLog([string]$file,[string]$content) {
 
 $form=New-Object System.Windows.Forms.Form
 $form.Text='Benner Workflow - Instalador de Servicos'
-$form.StartPosition='CenterScreen'; $form.Size=New-Object System.Drawing.Size(1160,1120)
-$form.MinimumSize=New-Object System.Drawing.Size(1100,1050)
+$form.StartPosition='CenterScreen'
+# Ajusta a janela a area util da tela; o conteudo rola quando nao couber (RDP, escala > 100%).
+$workArea=[System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$form.Size=New-Object System.Drawing.Size([Math]::Min(1160,$workArea.Width),[Math]::Min(1120,$workArea.Height))
+$form.MinimumSize=New-Object System.Drawing.Size(800,560)
 $form.BackColor=$script:Back; $form.Font=$script:Font
 $form.AutoScaleMode='Dpi'; $form.KeyPreview=$true
+# Todos os blocos ficam em $canvas, dentro de um painel com rolagem.
+$script:CanvasMinWidth=1082
+$script:CanvasMinHeight=1000
+$scrollHost=New-Object System.Windows.Forms.Panel
+$scrollHost.Dock='Fill'; $scrollHost.AutoScroll=$true; $scrollHost.BackColor=$script:Back
+$canvas=New-Object System.Windows.Forms.Panel
+$canvas.Location=New-Object System.Drawing.Point(0,0); $canvas.BackColor=$script:Back
+$scrollHost.Controls.Add($canvas); $form.Controls.Add($scrollHost)
 
 $header=New-Panel 18 15 1046 65
 $header.BackColor=[System.Drawing.Color]::FromArgb(20,25,36)
@@ -290,7 +301,7 @@ $headTitle=New-Label 'Workflow | Instalador de Servicos' 211 9 675 27 $true
 $headTitle.Font=$script:TitleFont
 $headSub=New-Label 'Instalacao em lote  |  Windows Services  |  Tema escuro' 213 38 700 18
 $headSub.ForeColor=$script:Muted
-$header.Controls.AddRange(@($logoBox,$headTitle,$headSub));$form.Controls.Add($header)
+$header.Controls.AddRange(@($logoBox,$headTitle,$headSub));$canvas.Controls.Add($header)
 
 $settings=New-Panel 18 92 1046 132
 $settings.Controls.Add((New-Label 'Diretorio base dos Workflows' 15 12 340 23 $true))
@@ -310,7 +321,7 @@ $checkboxPrefix.ForeColor=$script:Ink
 $checkboxPrefix.BackColor=$script:White
 $sample=New-Label 'Exemplo: AMBIENTE_SISTEMA_PRJ' 420 85 590 24
 $sample.ForeColor=$script:Muted
-$settings.Controls.AddRange(@($checkboxPrefix,$sample));$form.Controls.Add($settings)
+$settings.Controls.AddRange(@($checkboxPrefix,$sample));$canvas.Controls.Add($settings)
 
 $listPanel=New-Panel 18 235 1046 332
 $listTitle=New-Label 'Servicos encontrados' 15 12 300 23 $true
@@ -365,7 +376,7 @@ $colStatus.Name='Status';$colStatus.HeaderText='Resultado';$colStatus.FillWeight
 $colUnlockStatus=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $colUnlockStatus.Name='UnlockStatus';$colUnlockStatus.HeaderText='Desbloqueio';$colUnlockStatus.FillWeight=18;$colUnlockStatus.ReadOnly=$true
 [void]$grid.Columns.AddRange([System.Windows.Forms.DataGridViewColumn[]]@($colCheck,$colUnlock,$colFirst,$colSecond,$colName,$colHost,$colSystem,$colUser,$colNotify,$colStatus,$colUnlockStatus))
-$listPanel.Controls.AddRange(@($listTitle,$foundLabel,$markAll,$unmarkAll,$grid));$form.Controls.Add($listPanel)
+$listPanel.Controls.AddRange(@($listTitle,$foundLabel,$markAll,$unmarkAll,$grid));$canvas.Controls.Add($listPanel)
 
 
 # Grade independente para gerenciar Workflow Services instalados.
@@ -393,7 +404,9 @@ $installedGrid.DefaultCellStyle.SelectionBackColor=[System.Drawing.Color]::FromA
 $installedGrid.DefaultCellStyle.SelectionForeColor=$script:Ink
 $installedGrid.GridColor=$script:Border
 $ic1=New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
-$ic1.Name='Remove';$ic1.HeaderText='Selecionar';$ic1.FillWeight=11
+$icLogin=New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
+$icLogin.Name='LoginSel';$icLogin.HeaderText='Login';$icLogin.FillWeight=9
+$ic1.Name='Remove';$ic1.HeaderText='Remover';$ic1.FillWeight=10
 $ic2=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $ic2.Name='WinName';$ic2.HeaderText='Nome interno';$ic2.FillWeight=29;$ic2.ReadOnly=$true
 $ic3=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
@@ -404,7 +417,7 @@ $ic5=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $ic5.Name='ExeFolder';$ic5.HeaderText='Pasta do executavel';$ic5.FillWeight=55;$ic5.ReadOnly=$true
 $ic6=New-Object System.Windows.Forms.DataGridViewTextBoxColumn
 $ic6.Name='RemoveResult';$ic6.HeaderText='Resultado';$ic6.FillWeight=24;$ic6.ReadOnly=$true
-[void]$installedGrid.Columns.AddRange([System.Windows.Forms.DataGridViewColumn[]]@($ic1,$ic2,$ic3,$ic4,$ic5,$ic6))
+[void]$installedGrid.Columns.AddRange([System.Windows.Forms.DataGridViewColumn[]]@($icLogin,$ic1,$ic2,$ic3,$ic4,$ic5,$ic6))
 $accountLabel=New-Label 'Usuario do Windows' 15 43 135 24
 $accountBox=New-Object System.Windows.Forms.TextBox
 $accountBox.SetBounds(151,41,243,28);$accountBox.BackColor=[System.Drawing.Color]::FromArgb(35,43,57)
@@ -419,7 +432,7 @@ $changeLogin=New-Button 'Alterar login selecionados' 723 40 307 30 $true
 $changeLogin.Enabled=$false
 $changeLogin.BackColor=[System.Drawing.Color]::FromArgb(43,112,199)
 $installedPanel.Controls.AddRange(@($installedTitle,$refreshServices,$removeServices,$accountLabel,$accountBox,$passwordLabel,$passwordBox,$changeLogin,$installedGrid))
-$form.Controls.Add($installedPanel)
+$canvas.Controls.Add($installedPanel)
 
 function Get-WinExePath([string]$binaryPath) {
     if([string]::IsNullOrWhiteSpace($binaryPath)){return $null}
@@ -438,7 +451,7 @@ function Refresh-Installed {
         foreach($svc in $items) {
             $exe=Get-WinExePath ([string]$svc.PathName)
             $folder=if($exe){[IO.Path]::GetDirectoryName($exe)}else{''}
-            $ix=$installedGrid.Rows.Add($false,[string]$svc.Name,[string]$svc.DisplayName,[string]$svc.State,$folder,'')
+            $ix=$installedGrid.Rows.Add($false,$false,[string]$svc.Name,[string]$svc.DisplayName,[string]$svc.State,$folder,'')
             $installedGrid.Rows[$ix].Tag=[pscustomobject]@{ Name=[string]$svc.Name; Display=[string]$svc.DisplayName; Exe=$exe; Folder=$folder }
         }
         $installedTitle.Text="Workflow Services instalados no Windows ($($items.Count))"
@@ -469,7 +482,7 @@ function Is-SafeRemovalFolder([string]$folder,[string]$exe,[string]$root) {
     } catch {return $false}
 }
 function Update-RemoveButton {
-    $changeLogin.Enabled=(-not $script:Installing -and -not $script:Unlocking -and -not $script:Removing -and -not $script:ChangingLogin -and @($installedGrid.Rows | Where-Object { $_.Cells['Remove'].Value -eq $true }).Count -gt 0)
+    $changeLogin.Enabled=(-not $script:Installing -and -not $script:Unlocking -and -not $script:Removing -and -not $script:ChangingLogin -and @($installedGrid.Rows | Where-Object { $_.Cells['LoginSel'].Value -eq $true }).Count -gt 0)
     $removeServices.Enabled=(-not $script:Installing -and -not $script:Unlocking -and -not $script:Removing -and -not $script:ChangingLogin -and @($installedGrid.Rows | Where-Object { $_.Cells['Remove'].Value -eq $true }).Count -gt 0)
 }
 $installedGrid.Add_CurrentCellDirtyStateChanged({if($installedGrid.IsCurrentCellDirty){$installedGrid.CommitEdit([System.Windows.Forms.DataGridViewDataErrorContexts]::Commit) | Out-Null}})
@@ -542,16 +555,21 @@ $removeServices.Add_Click({
 })
 
 
-# The checkbox is shared with removal; only the clicked action is performed.
+# Login usa a coluna 'Login'; a remocao usa a coluna 'Remover' (selecoes independentes).
 $changeLogin.Add_Click({
     [void]$installedGrid.EndEdit()
-    $targets=@($installedGrid.Rows | Where-Object { $_.Cells['Remove'].Value -eq $true })
+    $targets=@($installedGrid.Rows | Where-Object { $_.Cells['LoginSel'].Value -eq $true })
     if($targets.Count -eq 0){return}
     $account=Normalize-ServiceAccount $accountBox.Text
     if([string]::IsNullOrWhiteSpace($account) -or $account -eq 'DOMINIO\usuario' -or $account -notmatch '^[^\\]+\\[^\\]+$' -or $account -match '\s'){
         [System.Windows.Forms.MessageBox]::Show('Informe DOMINIO\usuario ou .\usuario (conta local).','Usuario invalido','OK','Warning') | Out-Null;return
     }
-    if([string]::IsNullOrEmpty($passwordBox.Text)){
+    # gMSA (conta terminada em $) nao usa senha: o Windows exige senha nula.
+    $isManaged=$account.EndsWith('$')
+    if($isManaged -and -not [string]::IsNullOrEmpty($passwordBox.Text)){
+        [System.Windows.Forms.MessageBox]::Show('Contas gMSA (terminadas em $) nao usam senha. Deixe o campo Senha vazio.','Senha nao permitida','OK','Warning') | Out-Null;return
+    }
+    if(-not $isManaged -and [string]::IsNullOrEmpty($passwordBox.Text)){
         [System.Windows.Forms.MessageBox]::Show('Informe a senha da conta. A senha nao sera salva nos logs.','Senha necessaria','OK','Warning') | Out-Null;return
     }
     $names=($targets | ForEach-Object { $_.Tag.Name }) -join "`r`n"
@@ -562,12 +580,17 @@ $changeLogin.Add_Click({
     $installedGrid.ReadOnly=$true;$accountBox.Enabled=$false;$passwordBox.Enabled=$false
     $browseButton.Enabled=$false;$scanButton.Enabled=$false;$installButton.Enabled=$false;$unlockButton.Enabled=$false
     $log=Join-Path $script:LogDirectory ('Workflow_Logon_{0}.log' -f (Get-Date -Format 'yyyyMMdd_HHmmss_fff'))
+    $changed=New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $grantError=$null
     try {
         New-Item -ItemType Directory -Path $script:LogDirectory -Force -ErrorAction Stop | Out-Null
-        # Grant only once for the target account; a GPO can still override this right.
-        $grantError=$null
+        # Uma falha aqui (ex.: GPO) nao impede a alteracao: o direito pode ja existir.
+        # O teste de partida opcional confirma se a conta consegue iniciar o servico.
         try { [WorkflowServiceCredentials]::AllowServiceLogon($account) }
-        catch { $grantError=$_.Exception.Message }
+        catch {
+            $grantError=$_.Exception.Message
+            Add-Content -LiteralPath $log -Encoding UTF8 -Value "$(Get-Date -Format o) AVISO nao foi possivel conceder Log on as a service a ${account}: $grantError"
+        }
         foreach($row in $targets) {
             $name=[string]$row.Tag.Name
             $row.Cells['RemoveResult'].Value='Alterando login...'
@@ -575,13 +598,15 @@ $changeLogin.Add_Click({
             try {
                 $before=Read-ServiceLogon $name
                 if(-not ($before.Name -like '*Workflow Service*' -or $before.DisplayName -like '*Workflow Service*')){throw 'O servico nao corresponde mais ao filtro Workflow Service.'}
-                if($grantError){throw "Nao foi possivel conceder Log on as a service: $grantError"}
-                [WorkflowServiceCredentials]::SetLogon($name,$account,$passwordBox.Text)
+                # gMSA: senha nula ([NullString]), nunca string vazia.
+                if($isManaged){[WorkflowServiceCredentials]::SetLogon($name,$account,[NullString]::Value)}
+                else{[WorkflowServiceCredentials]::SetLogon($name,$account,$passwordBox.Text)}
                 $after=Read-ServiceLogon $name
                 $expected=(New-Object System.Security.Principal.NTAccount($account)).Translate([System.Security.Principal.SecurityIdentifier]).Value
                 $actual=(New-Object System.Security.Principal.NTAccount($after.StartName)).Translate([System.Security.Principal.SecurityIdentifier]).Value
                 if($expected -ne $actual){throw "Conta do servico nao confere. Atual: $($after.StartName)"}
-                $row.Cells['RemoveResult'].Value='Login alterado (nao testado)'
+                $row.Cells['RemoveResult'].Value=$(if($grantError){'Login alterado (sem direito confirmado)'}else{'Login alterado (nao testado)'})
+                [void]$changed.Add($name)
                 Add-Content -LiteralPath $log -Encoding UTF8 -Value "$(Get-Date -Format o) LOGIN ALTERADO $name $($after.StartName); estado=$($after.State); senha omitida"
             } catch {
                 $row.Cells['RemoveResult'].Value='Falha no login / ver log'
@@ -597,11 +622,16 @@ $changeLogin.Add_Click({
         $browseButton.Enabled=$true;$scanButton.Enabled=$true
         Update-Selection;Update-RemoveButton
     }
-    $answer=[System.Windows.Forms.MessageBox]::Show("Alteracao registrada. Para VALIDAR a senha, voce pode reiniciar os servicos selecionados (havera interrupcao).`r`n`r`nReiniciar agora?",'Validacao das credenciais','YesNo','Question',[System.Windows.Forms.MessageBoxDefaultButton]::Button2)
+    if($changed.Count -eq 0){
+        [System.Windows.Forms.MessageBox]::Show("Nenhum servico foi alterado. Consulte o log:`r`n$log",'Alteracao de login','OK','Warning') | Out-Null
+        return
+    }
+    $grantNote=$(if($grantError){"`r`n`r`nATENCAO: nao foi possivel conceder 'Log on as a service' ($grantError). Se a conta ainda nao tiver esse direito, o servico nao vai iniciar."}else{''})
+    $answer=[System.Windows.Forms.MessageBox]::Show("Alteracao registrada.$grantNote`r`n`r`nPara VALIDAR a senha, voce pode reiniciar os servicos selecionados (havera interrupcao).`r`n`r`nReiniciar agora?",'Validacao das credenciais','YesNo','Question',[System.Windows.Forms.MessageBoxDefaultButton]::Button2)
     if($answer -eq 'Yes'){
         foreach($row in $targets){
             $name=[string]$row.Tag.Name
-            if($row.Cells['RemoveResult'].Value -ne 'Login alterado (nao testado)'){continue}
+            if(-not $changed.Contains($name)){continue}
             try {
                 $svc=Get-Service -Name $name -ErrorAction Stop
                 if($svc.Status -ne 'Stopped') { Stop-Service -Name $name -ErrorAction Stop; $svc.WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60)) }
@@ -630,7 +660,7 @@ $preview.BackColor=[System.Drawing.Color]::FromArgb(16,22,33)
 $preview.ForeColor=[System.Drawing.Color]::FromArgb(184,209,236)
 $preview.BorderStyle='FixedSingle'
 $preview.SetBounds(15,36,1014,69);$preview.Anchor='Top,Bottom,Left,Right'
-$previewPanel.Controls.AddRange(@($previewTitle,$selectedCount,$preview));$form.Controls.Add($previewPanel)
+$previewPanel.Controls.AddRange(@($previewTitle,$selectedCount,$preview));$canvas.Controls.Add($previewPanel)
 
 $footer=New-Panel 18 697 1046 120
 $summary=New-Label '0 servico(s) selecionado(s) para instalacao' 15 8 650 21 $true
@@ -649,10 +679,20 @@ $unlockButton.ForeColor=[System.Drawing.Color]::FromArgb(24,30,42)
 $unlockButton.Enabled=$false
 $installButton=New-Button 'Instalar selecionados' 908 12 122 50 $true
 $installButton.Enabled=$false
-$footer.Controls.AddRange(@($summary,$progressLabel,$progressBar,$logsButton,$unlockButton,$installButton,$initialConfigButton,$editConfigButton));$form.Controls.Add($footer)
+$footer.Controls.AddRange(@($summary,$progressLabel,$progressBar,$logsButton,$unlockButton,$installButton,$initialConfigButton,$editConfigButton));$canvas.Controls.Add($footer)
 
 function Resize-Layout {
-    $w=$form.ClientSize.Width-36
+    # Calcula o tamanho do canvas descontando as barras de rolagem que ele mesmo vai exigir.
+    $hostW=$scrollHost.Width; $hostH=$scrollHost.Height
+    $needV=$hostH -lt $script:CanvasMinHeight
+    if($needV){$hostW-=[System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth}
+    $needH=$hostW -lt $script:CanvasMinWidth
+    if($needH){$hostH-=[System.Windows.Forms.SystemInformation]::HorizontalScrollBarHeight}
+    if($needH -and -not $needV -and $hostH -lt $script:CanvasMinHeight){$hostW-=[System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth}
+    $canvasW=[Math]::Max($hostW,$script:CanvasMinWidth)
+    $canvasH=[Math]::Max($hostH,$script:CanvasMinHeight)
+    $canvas.Size=New-Object System.Drawing.Size($canvasW,$canvasH)
+    $w=$canvasW-36
     $header.Width=$w; $settings.Width=$w; $listPanel.Width=$w
     $previewPanel.Width=$w;$footer.Width=$w;$installedPanel.Width=$w
     $pathBox.Width=$w-298
@@ -666,14 +706,14 @@ function Resize-Layout {
     $progressBar.Width=$w-420
     # Ordem visual: instalacao (grade, comandos, botoes) e, por ultimo,
     # gerenciamento de servicos instalados (login e remocao).
-    $installedPanel.Top=$form.ClientSize.Height-$installedPanel.Height-18
+    $installedPanel.Top=$canvasH-$installedPanel.Height-18
     $footer.Top=$installedPanel.Top-$footer.Height-12
     $previewPanel.Top=$footer.Top-$previewPanel.Height-12
     $listPanel.Top=235
     $listPanel.Height=[Math]::Max(250,$previewPanel.Top-$listPanel.Top-12)
     $grid.Height=$listPanel.Height-66
 }
-$form.Add_Resize({ Resize-Layout })
+$scrollHost.Add_Resize({ Resize-Layout })
 $browseButton.Add_Click({
     $dialog=New-Object System.Windows.Forms.FolderBrowserDialog
     $dialog.Description='Selecione o diretorio base de Workflow (WFL)'
@@ -841,7 +881,7 @@ function Start-NextInstallation {
         Set-Busy $false
         $ok=0;$failed=0
         foreach($row in $grid.Rows){
-            if([string]$row.Cells['Status'].Value -eq 'Sucesso'){$ok++}
+            if([string]$row.Cells['Status'].Value -like 'Sucesso*'){$ok++}
             elseif([string]$row.Cells['Status'].Value -like 'Falha*'){$failed++}
         }
         $progressBar.Value=100
@@ -852,11 +892,18 @@ function Start-NextInstallation {
     $task=$script:Queue[$script:QueuePosition]
     $script:CurrentTask=$task
     $configError=$null
-    try {
-        $grid.Rows[$task.Index].Cells['Status'].Value='Configurando...'
-        Set-WorkflowConfig $task.Exe $task.Host $task.System $task.User $task.NotifyUser $script:SessionLog
-    } catch {
-        $configError=$_.Exception.Message
+    $task | Add-Member -NotePropertyName ConfigEdited -NotePropertyValue $false -Force
+    if(Test-Path -LiteralPath ($task.Exe+'.config') -PathType Leaf){
+        try {
+            $grid.Rows[$task.Index].Cells['Status'].Value='Configurando...'
+            Set-WorkflowConfig $task.Exe $task.Host $task.System $task.User $task.NotifyUser $script:SessionLog
+            $task.ConfigEdited=$true
+        } catch {
+            $configError=$_.Exception.Message
+        }
+    } else {
+        # Sem .config (Configurar.exe ainda nao salvo): instala sem editar, conforme confirmado.
+        Write-OutputLog $script:SessionLog ("CONFIG IGNORADO | $($task.Name) | arquivo ausente: $($task.Exe).config")
     }
     if($null -ne $configError) {
         $grid.Rows[$task.Index].Cells['Status'].Value='Falha (config)'
@@ -917,7 +964,7 @@ $timer.Add_Tick({
     $task=$script:CurrentTask
     $success=($exit -eq 0)
     $state=$(if($success){'SUCESSO'}else{'FALHA'})
-    $grid.Rows[$task.Index].Cells['Status'].Value=$(if($success){'Sucesso'}else{"Falha (codigo $exit)"})
+    $grid.Rows[$task.Index].Cells['Status'].Value=$(if(-not $success){"Falha (codigo $exit)"}elseif($task.ConfigEdited){'Sucesso'}else{'Sucesso (sem .config)'})
     $grid.Rows[$task.Index].Cells['Status'].Style.ForeColor=$(if($success){[Drawing.Color]::FromArgb(103,225,158)}else{[Drawing.Color]::FromArgb(255,121,138)})
     $detail=''
     if(Test-Path -LiteralPath $script:CurrentLog){try{$detail=[IO.File]::ReadAllText($script:CurrentLog)}catch{}}
@@ -945,7 +992,7 @@ function Get-SelectedConfigTasks {
         $systemValue=([string]$row.Cells['SystemName'].Value).Trim()
         $userValue=([string]$row.Cells['WorkflowUser'].Value).Trim()
         $notifyValue=([string]$row.Cells['NotifySenderUser'].Value).Trim()
-        if([string]::IsNullOrWhiteSpace($hostValue) -or $hostValue -notmatch '^[a-zA-Z0-9_.-]+$'){$errors.Add("Benner Server invalido: $exe");continue}
+        if([string]::IsNullOrWhiteSpace($hostValue) -or $hostValue -notmatch '^[a-zA-Z0-9_.-]+(:[0-9]{1,5})?$'){$errors.Add("Benner Server invalido: $exe");continue}
         if([string]::IsNullOrWhiteSpace($systemValue) -or [string]::IsNullOrWhiteSpace($userValue) -or [string]::IsNullOrWhiteSpace($notifyValue)){$errors.Add("SYSTEMNAME/Usuario/Notificacao obrigatorios: $exe");continue}
         $tasks.Add([pscustomobject]@{Index=$row.Index;Exe=$exe;Host=$hostValue;System=$systemValue;User=$userValue;NotifyUser=$notifyValue})
     }
@@ -1019,14 +1066,12 @@ $installButton.Add_Click({
         if(-not (Test-Path -LiteralPath $row.Tag.Exe -PathType Leaf)){$problems.Add("Executavel ausente: $($row.Tag.Exe)");continue}
         $hostValue=([string]$row.Cells['SuperServerHost'].Value).Trim()
         $sysValue=([string]$row.Cells['SystemName'].Value).Trim()
-        if([string]::IsNullOrWhiteSpace($hostValue) -or $hostValue -notmatch '^[a-zA-Z0-9_.-]+$'){$problems.Add("Benner Server invalido ou vazio para '$name'.");continue}
+        if([string]::IsNullOrWhiteSpace($hostValue) -or $hostValue -notmatch '^[a-zA-Z0-9_.-]+(:[0-9]{1,5})?$'){$problems.Add("Benner Server invalido ou vazio para '$name'.");continue}
         if([string]::IsNullOrWhiteSpace($sysValue)){$problems.Add("SYSTEMNAME vazio para '$name'.");continue}
         $userValue=([string]$row.Cells['WorkflowUser'].Value).Trim()
         $notifyValue=([string]$row.Cells['NotifySenderUser'].Value).Trim()
         if([string]::IsNullOrWhiteSpace($userValue)){$problems.Add("Usuario vazio para '$name'.");continue}
         if([string]::IsNullOrWhiteSpace($notifyValue)){$problems.Add("Usuario de notificacao vazio para '$name'.");continue}
-        $cfgPath=([string]$row.Tag.Exe) + '.config'
-        if(-not (Test-Path -LiteralPath $cfgPath -PathType Leaf)){$problems.Add("Config ausente: $cfgPath");continue}
         $tasks.Add([pscustomobject]@{Index=$row.Index;Name=$name;Exe=$row.Tag.Exe;Host=$hostValue;System=$sysValue;User=$userValue;NotifyUser=$notifyValue})
     }
     if($problems.Count -gt 0){[System.Windows.Forms.MessageBox]::Show(($problems -join "`r`n"),'Corrija antes de instalar','OK','Warning') | Out-Null;return}
@@ -1038,7 +1083,12 @@ $installButton.Add_Click({
     try {foreach($svc in [System.ServiceProcess.ServiceController]::GetServices()){[void]$existing.Add($svc.ServiceName)}} catch {}
     foreach($task in $tasks){if($existing.Contains($task.Name)){$problems.Add("Ja existe um servico no Windows com nome: $($task.Name)")}}
     if($problems.Count -gt 0){[System.Windows.Forms.MessageBox]::Show(($problems -join "`r`n"),'Servico existente','OK','Warning') | Out-Null;return}
-    $confirm="Instalar $($tasks.Count) servico(s) Workflow no Windows?`r`n`r`nAntes de instalar, o .config de cada servico sera atualizado e recebera um backup. Instalacoes sequenciais nao sao revertidas automaticamente em caso de falha.`r`n`r`nDeseja continuar?"
+    $noConfig=@($tasks | Where-Object { -not (Test-Path -LiteralPath ($_.Exe+'.config') -PathType Leaf) })
+    $noConfigNote=''
+    if($noConfig.Count -gt 0){
+        $noConfigNote="`r`n`r`nATENCAO: $($noConfig.Count) linha(s) ainda nao tem .config e serao instaladas SEM editar a configuracao (use 'Abrir Configurar (inicial)' e depois 'Editar .config selecionados'):`r`n"+(($noConfig | ForEach-Object { $_.Name }) -join "`r`n")
+    }
+    $confirm="Instalar $($tasks.Count) servico(s) Workflow no Windows?`r`n`r`nAntes de instalar, o .config existente de cada servico sera atualizado e recebera um backup. Instalacoes sequenciais nao sao revertidas automaticamente em caso de falha.$noConfigNote`r`n`r`nDeseja continuar?"
     if([System.Windows.Forms.MessageBox]::Show($confirm,'Confirmar instalacao','YesNo','Question') -ne 'Yes'){return}
     try {New-Item -ItemType Directory -Path $script:LogDirectory -Force -ErrorAction Stop | Out-Null} catch {
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message,'Falha criando pasta de logs','OK','Error') | Out-Null;return

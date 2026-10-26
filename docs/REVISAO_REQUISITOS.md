@@ -25,7 +25,7 @@ A interface Windows Forms, o InstallUtil, `Unblock-File`, o SCM e a remoção de
 | Desbloquear marcados, recursivo, botão branco com texto escuro | Coberto; não segue junctions/symlinks e só age em arquivos com `Zone.Identifier` |
 | Editar `.config`: só as 4 chaves, preservar o resto, backup, validar XML | Coberto; exige cada chave exatamente uma vez e restaura o backup se o `Save` falhar |
 | Botão "Editar .config selecionados" sem instalar | Coberto; se faltar algum `.config`, bloqueia o lote inteiro antes de tocar em arquivos |
-| "Instalar selecionados" edita o XML antes | Coberto, mas **diverge levemente**: a linha sem `.config` é recusada (não instala), enquanto o requisito fala em editar "quando o arquivo existir" |
+| "Instalar selecionados" edita o XML antes | Coberto; sem `.config`, instala sem editar e avisa (ponto 6 abaixo) |
 | Abrir Configurar (inicial), sem inventar CLI | Coberto; procura `Configurar.exe` na pasta do Workflow, na pasta pai ou ao lado do script e abre sem argumentos. Automação do primeiro salvamento continua pendente |
 | Ordem do layout (configuração, grade, prévia/logs/botões, serviços instalados por último) | Coberto (`Resize-Layout` ancora a grade de serviços no fim) |
 | Grade de serviços com "Workflow Service" no nome ou display name | Coberto (`Win32_Service`) |
@@ -34,16 +34,19 @@ A interface Windows Forms, o InstallUtil, `Unblock-File`, o SCM e a remoção de
 | Alterar login via `ChangeServiceConfig`, `SeServiceLogonRight`, reler conta, teste opcional, limpar senha | Coberto; compara o SID da conta relida e limpa o campo senha no `finally` |
 | Logs em `C:\ProgramData\Benner\WorkflowInstaller\Logs`, sem senhas | Coberto; nenhum log grava senha nem `passEncrypted` |
 
-## Pontos de atenção encontrados
+## Pontos de atenção encontrados (tratados para teste)
 
-1. **Tamanho mínimo da janela (1100 x 1050).** Em telas 1366x768 ou 1920x1080 com escala acima de 100% (comum via RDP), a janela não cabe e o formulário não tem rolagem, então a grade de serviços instalados pode ficar fora da tela. É o risco mais provável no primeiro teste.
-2. **Mesma checkbox para login e remoção.** Na grade de serviços, a coluna "Selecionar" serve tanto para "Alterar login" quanto para "Remover selecionados". Há confirmação explícita antes de remover, mas é fácil marcar para login e clicar no botão errado.
-3. **Falha ao conceder `SeServiceLogonRight` derruba todas as linhas.** Se a chamada LSA falhar (por exemplo, por GPO), nenhuma conta é alterada, mesmo que a conta já tenha o direito.
-4. **Benner Server só aceita letras, números, `_`, `.` e `-`.** Um host com porta (`host:porta`) ou IPv6 é recusado; confirmar se isso basta.
-5. **Conta do login só no formato `DOMINIO\usuario` ou `.\usuario`.** UPN (`usuario@dominio`) é recusado. Contas gMSA (`DOMINIO\conta$`) passam pela validação, mas exigem senha vazia, que o formulário recusa.
+Os pontos abaixo foram encontrados na revisão do ZIP original e **já foram ajustados** no script, aguardando teste em Windows:
+
+1. **Tamanho mínimo da janela (era 1100 x 1050, sem rolagem).** Agora a janela abre no tamanho da área útil da tela (máximo 1160 x 1120), o mínimo caiu para 800 x 560 e todo o conteúdo fica em um painel com rolagem.
+2. **Mesma checkbox para login e remoção.** Agora há duas colunas: "Login" (usada por "Alterar login selecionados") e "Remover" (usada por "Remover selecionados").
+3. **Falha ao conceder `SeServiceLogonRight` derrubava todas as linhas.** Agora a alteração continua, com aviso no log e na tela, e o resultado indica "sem direito confirmado". O teste de partida opcional confirma se a conta consegue iniciar o serviço.
+4. **Benner Server não aceitava porta.** Agora aceita `host:porta` (porta de 1 a 5 dígitos). Falta confirmar se a aplicação Benner aceita esse formato em `superServerHost`. IPv6 continua recusado.
+5. **gMSA exigia senha.** Contas terminadas em `$` agora exigem o campo Senha vazio e são gravadas com senha nula, como o `ChangeServiceConfig` pede. UPN (`usuario@dominio`) continua recusado.
+6. **"Instalar" recusava linha sem `.config`.** Agora a linha é instalada sem editar a configuração, com aviso na confirmação, registro `CONFIG IGNORADO` no log e resultado "Sucesso (sem .config)". Um `.config` existente mas inválido continua bloqueando a linha.
 
 ## Alterações feitas ao importar
 
 - Os exemplos de nome no formulário (`OCI140-GLOBO_JURIDICO_PRJ` / `JURIDICO_PRJ`) foram trocados por `AMBIENTE_SISTEMA_PRJ` / `SISTEMA_PRJ`, porque o repositório é público.
 - O logo passou a ser procurado também em `..\assets\benner-logo.png`, para funcionar com a estrutura do repositório. O comportamento do pacote original (logo ao lado do script) não mudou.
-- O `LEIA-ME.txt` do pacote foi movido para `docs/LEIA-ME.txt` sem alterações.
+- O `LEIA-ME.txt` do pacote foi movido para `docs/LEIA-ME.txt`, com uma seção nova descrevendo as melhorias para teste.
