@@ -26,7 +26,7 @@ A interface Windows Forms, o InstallUtil, `Unblock-File`, o SCM e a remoção de
 | Editar `.config`: só as 4 chaves, preservar o resto, backup, validar XML | Coberto; exige cada chave exatamente uma vez e restaura o backup se o `Save` falhar |
 | Botão "Editar .config selecionados" sem instalar | Coberto; se faltar algum `.config`, bloqueia o lote inteiro antes de tocar em arquivos |
 | "Instalar selecionados" edita o XML antes | Coberto; sem `.config`, instala sem editar e avisa (ponto 6 abaixo) |
-| Abrir Configurar (inicial), sem inventar CLI | Coberto; procura `Configurar.exe` na pasta do Workflow, na pasta pai ou ao lado do script e abre sem argumentos. Automação do primeiro salvamento continua pendente |
+| Abrir Configurar (inicial), sem inventar CLI | Coberto; procura `Configurar.exe` na pasta do Workflow, na pasta pai ou ao lado do script e abre sem argumentos. Primeiro salvamento automatizado: o `.config` é gerado do `.config.modelo` como o Configurar faz (ver LEIA-ME) |
 | Ordem do layout (configuração, grade, prévia/logs/botões, serviços instalados por último) | Coberto (`Resize-Layout` ancora a grade de serviços no fim) |
 | Grade de serviços com "Workflow Service" no nome ou display name | Coberto (`Win32_Service`) |
 | Remoção: parar, `sc delete`, confirmar no SCM, só então apagar pasta | Coberto; aguarda até ~15 s o serviço sumir, senão preserva a pasta |
