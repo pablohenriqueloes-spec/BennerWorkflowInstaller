@@ -306,7 +306,24 @@ function Invoke-HubSafe {
     <# Executa a acao de um botao; qualquer erro vira mensagem em vez de derrubar a janela. #>
     param([Parameter(Mandatory)][scriptblock]$Action, [string]$Title = 'Erro inesperado')
     try { & $Action }
-    catch { Show-HubMessage -Text $_.Exception.Message -Title $Title -Kind Error | Out-Null }
+    catch {
+        $where = $_.InvocationInfo.PositionMessage
+        Write-HubErrorLog -ErrorRecord $_
+        Show-HubMessage -Text ("{0}`r`n`r`n{1}`r`n`r`nDetalhes em {2}" -f $_.Exception.Message, $where, (Get-HubErrorLogPath)) -Title $Title -Kind Error | Out-Null
+    }
+}
+
+function Get-HubErrorLogPath { return (Join-Path $env:ProgramData 'Benner\Hub\BennerHub_erro.log') }
+
+function Write-HubErrorLog {
+    <# Registra erro com local e pilha de chamadas para diagnostico. #>
+    param([Parameter(Mandatory)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+    try {
+        $path = Get-HubErrorLogPath
+        New-Item -ItemType Directory -Path (Split-Path $path -Parent) -Force | Out-Null
+        $text = "{0} {1}`r`n{2}`r`n{3}`r`n" -f (Get-Date -Format o), $ErrorRecord.Exception.Message, $ErrorRecord.InvocationInfo.PositionMessage, $ErrorRecord.ScriptStackTrace
+        [System.IO.File]::AppendAllText($path, $text, [System.Text.Encoding]::UTF8)
+    } catch {}
 }
 
 function Invoke-HubDoEvents {

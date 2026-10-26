@@ -35,9 +35,11 @@ function Set-RowState($Row, [string]$Key, [string]$Text, [string]$Kind = '') {
     $Row[$Key] = $Text
     $Row[$Key + 'Kind'] = $Kind
 }
-function Get-CheckedRows($Rows, [string]$Key) { return @($Rows | Where-Object { $_.IsChecked($Key) }) }
-function Get-VisibleRows($Rows) { return @($Rows | Where-Object { $_['Visible'] -eq $true }) }
-function Get-HiddenCount($Rows) { return @($Rows | Where-Object { $_['Visible'] -ne $true }).Count }
+# Sempre devolvem um array (a virgula impede o PowerShell de transformar lista vazia em $null
+# ou lista de um item em item solto) e ignoram entradas nulas.
+function Get-CheckedRows($Rows, [string]$Key) { return , @($Rows | Where-Object { $null -ne $_ -and $_.IsChecked($Key) }) }
+function Get-VisibleRows($Rows) { return , @($Rows | Where-Object { $null -ne $_ -and $_['Visible'] -eq $true }) }
+function Get-HiddenCount($Rows) { return @($Rows | Where-Object { $null -ne $_ -and $_['Visible'] -ne $true }).Count }
 
 function Get-BulkNote([int]$Count, [int]$Hidden) {
     $note = ''
