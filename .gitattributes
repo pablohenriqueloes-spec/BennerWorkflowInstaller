@@ -3,3 +3,6 @@
 *.cmd text eol=crlf
 *.txt text eol=crlf
 *.png binary
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+*.xaml text eol=crlf
