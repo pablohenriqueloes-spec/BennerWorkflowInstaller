@@ -138,3 +138,17 @@ MELHORIAS PARA TESTE (26/10/2026)
 - Benner Server aceita porta opcional (ex.: servidor:8080). Confirme se a aplicacao
   Benner aceita esse formato antes de usar.
 - Exemplos de nome no formulario usam nomes genericos.
+
+PESQUISA E SELECAO EM MASSA NAS GRADES
+--------------------------------------
+- As duas grades (Servicos encontrados e Workflow Services instalados) tem uma caixa Pesquisar.
+- A pesquisa funciona como LIKE '%texto%': mostra as linhas que contem o trecho em qualquer
+  coluna de texto, sem diferenciar maiusculas, enquanto voce digita. % ou * funcionam como
+  curinga no meio do termo (ex.: OCI%PRJ). Esc limpa a pesquisa.
+- Filtrar NAO desmarca linhas: marcacoes em linhas ocultas continuam valendo para as acoes.
+- O cabecalho das colunas Instalar, Desbloquear, Login e Remover tem uma caixa que marca ou
+  desmarca todas as linhas VISIVEIS (respeitando a pesquisa). Os botoes Marcar todos /
+  Desmarcar todos fazem o mesmo na coluna Instalar.
+- Com mais de 2 servicos marcados em uma coluna, aparece um alerta amarelo ao lado da pesquisa
+  com a quantidade (e quantos estao ocultos pelo filtro). As confirmacoes de Instalar, Editar
+  .config, Desbloquear, Alterar login e Remover tambem informam quantos servicos serao afetados.
