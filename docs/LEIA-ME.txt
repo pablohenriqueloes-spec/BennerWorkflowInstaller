@@ -1,0 +1,126 @@
+﻿BENNER WORKFLOW - INSTALADOR DE SERVICOS
+
+1. Copie esta pasta para o servidor Windows que contem os arquivos Workflow.
+2. Clique com o botao direito em Iniciar-Instalador.cmd e execute. Aceite o UAC.
+3. Informe o diretorio base, por exemplo E:\Benner\WFL.
+4. Clique em Buscar pastas. O programa encontra WFL\VARIAVEL1\VARIAVEL2 apenas quando existe
+   o arquivo Benner.Tecnologia.Workflow.Runtime.Application.exe na segunda pasta.
+5. Marque as linhas a instalar, ajuste nomes e clique em Instalar selecionados.
+6. Para remover o marcador de origem da Internet, marque a coluna Desbloquear em cada linha
+   e clique em Desbloquear marcados. Esta operacao e independente da coluna Instalar.
+7. Consulte resultados por linha e os logs em C:\ProgramData\Benner\WorkflowInstaller\Logs.
+
+REQUISITOS
+- Windows PowerShell 5.1; .NET Framework 4.x; Windows Forms; executar como administrador.
+- InstallUtil.exe em %WINDIR%\Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe.
+- Permissoes de leitura e de instalacao de servicos no servidor.
+
+OBSERVACOES
+- O instalador executa cada instalacao sequencialmente (um unico lote).
+- Nomes de servico so aceitam letras, numeros, underscore, ponto e hifen.
+- Confira se a aplicacao usa o parametro /sys como informado antes de usar em producao.
+- Nenhum servico e iniciado automaticamente pelo instalador.
+- O codigo de saida do InstallUtil e o criterio de sucesso. Consulte o log para detalhes.
+- Nao ha rollback automatico em caso de falha ou de instalacao parcial.
+- Este pacote nao foi executado/testado em um servidor Windows real neste ambiente.
+
+DESBLOQUEIO
+- Remove apenas o fluxo Zone.Identifier (Mark of the Web) dos arquivos de cada pasta e subpastas.
+- Nao libera arquivos em uso por processos, nao altera ACLs e nao remove bloqueio de antivirus.
+- Nao percorre junctions nem links simbolicos; erros individuais sao registrados nos logs.
+- Desbloqueie somente arquivos cuja origem seja confiavel.
+
+TEMA DARK / MARCA BENNER
+- Interface escura em Windows Forms, com cores da identidade Benner.
+- O pacote inclui uma marca estilizada de referencia (nao o arquivo oficial).
+- Para substituir pelo logotipo oficial, salve a imagem PNG com nome benner-logo.png
+  na mesma pasta do arquivo BennerWorkflowInstaller.ps1.
+- Sem esse arquivo, aparece o nome Benner estilizado no cabecalho.
+- Logo e marca de titularidade da Benner. O arquivo fornecido e uma aproximacao visual.
+
+CONFIGURACAO AUTOMATICA (novo):
+- Cada linha exibe os campos editaveis Benner Server (superServerHost) e SYSTEMNAME.
+- SYSTEMNAME inicia com o nome da pasta VARIAVEL2. Benner Server deve ser informado.
+- Antes do InstallUtil, atualiza no .exe.config as chaves superServerHost e systemName.
+- Configura as chaves user e notifySenderUser como SYSDBA.
+- Quando o .exe.config existe, exige que seja valido e tenha as quatro chaves.
+- Faz copia .backup_yyyyMMdd_HHmmss_fff antes de cada alteracao.
+- Falhas de configuracao impedem a instalacao da linha, sem interromper o lote.
+- Demais chaves como passEncrypted permanecem inalteradas.
+- O botao Desbloquear marcados agora tem fundo branco com texto escuro.
+
+CAMPOS EDITAVEIS USER E NOTIFYSENDERUSER:
+- A tabela possui as colunas Usuario (key=user) e Usuario notificacao (key=notifySenderUser).
+- Ambas iniciam com SYSDBA, mas aceitam alteracoes especificas para cada linha.
+- Valores vazios impedem a instalacao da linha.
+- Antes da instalacao, sao salvos com superServerHost e systemName no arquivo .exe.config, apos backup.
+
+GERENCIAMENTO E REMOCAO DE SERVICOS (NOVA GRADE)
+------------------------------------------------
+- A grade inferior lista servicos Win32_Service cujo Name OU DisplayName contem "Workflow Service".
+- Use "Atualizar lista", marque a coluna "Apagar" e clique "Remover selecionados".
+- A confirmacao explicita mostra os nomes e as pastas que serao removidos definitivamente.
+- A remocao para o servico, executa sc.exe delete, confirma que desapareceu e SOMENTE ENTAO remove a pasta.
+- Por seguranca, a exclusao da pasta e permitida apenas para caminhos do tipo
+  <raiz WFL>\VARIAVEL1\VARIAVEL2\Benner.Tecnologia.Workflow.Runtime.Application.exe.
+- Pastas com junctions/symlinks, referencias de outros servicos ao mesmo executavel,
+  caminhos ausentes ou inesperados sao bloqueados.
+- Se o Windows ainda apresentar o servico apos sc delete, a pasta permanece intacta.
+- Os detalhes de cada tentativa ficam em Workflow_Remocao_*.log, na pasta de logs.
+- Requer PowerShell 5.1 elevado; revise as pastas e tenha backup antes de remover.
+- A rotina de remocao nao foi validada em um Windows real neste ambiente.
+
+ALTERACAO DE LOGON DOS SERVICOS INSTALADOS
+----------------------------------------
+- Na grade inferior, marque os servicos na coluna Selecionar.
+- Informe DOMINIO\usuario ou .\usuario e a senha da conta. O campo senha aceita colar.
+- Clique Alterar login selecionados e confirme. Nao depende de sc.exe config com senha na linha de comando.
+- O programa tenta conceder SeServiceLogonRight (Log on as a service) pela API LSA.
+- Altera a identidade do servico pela API nativa ChangeServiceConfig do SCM.
+- Em seguida relê a conta StartName do Windows e valida a identidade (SID).
+- Nao registra nem salva a senha. A senha e apagada do formulario apos o uso.
+- Uma alteracao da configuracao NAO prova que a senha esta correta.
+- O programa pergunta se deseja reiniciar/iniciar os servicos alterados para validar efetivamente as credenciais.
+- Essa validacao causa interrupcao. Caso a inicializacao falhe, consulte o log e o Event Viewer (System / Service Control Manager).
+- Se houver GPO negando SeServiceLogonRight, a politica precisa ser ajustada; a ferramenta nao contorna GPO.
+- Os logs sao gravados em Workflow_Logon_*.log, sem a senha.
+- Execute inicialmente em homologacao, com uma conta de menor privilegio e backup disponivel.
+- A rotina nativa precisa ser validada no servidor Windows antes do uso em producao.
+
+ORGANIZACAO DA INTERFACE
+- Primeiro bloco: descoberta, configuracao, grade, previa e botoes de instalacao/desbloqueio/logs.
+- Ultimo bloco do formulario: servicos ja instalados, alteracao de login e remocao.
+
+CONFIGURACAO INICIAL E EDICAO SEM INSTALAR (NOVO)
+--------------------------------------------------
+- Para um Workflow sem .exe.config, marque UMA linha e clique "Abrir Configurar (inicial)".
+- O aplicativo procura Configurar.exe na pasta do Workflow, pasta pai ou na pasta do instalador.
+- Abra e salve o configurador da Benner; confirme que foi criado o .exe.config AO LADO do runtime.
+- Nao ha prova de parametros de CLI oficiais para o Configurar.exe; o preenchimento
+  inicial pelo configurador precisa ser feito manualmente nesta versao.
+- Apos salvar, selecione um ou mais Workflows e use "Editar .config selecionados".
+- Essa acao edita SOMENTE superServerHost, systemName, user e notifySenderUser,
+  a partir das colunas da grade, criando backup e log individual.
+- Editar .config NAO chama InstallUtil.exe nem inicia/remove qualquer servico.
+- Se algum .config nao existir, o lote inteiro e bloqueado antes de alterar arquivos.
+- "Instalar selecionados" edita o .config quando ele existe; sem .config, instala sem editar (veja MELHORIAS PARA TESTE).
+- O campo passEncrypted e preservado, nao e criado ou substituido automaticamente.
+
+MELHORIAS PARA TESTE (26/10/2026)
+---------------------------------
+- Janela: abre no tamanho da area util da tela (maximo 1160 x 1120) e o conteudo
+  ganha barras de rolagem quando nao couber (RDP, resolucao baixa ou escala > 100%).
+- Grade de servicos instalados: colunas separadas "Login" (para Alterar login
+  selecionados) e "Remover" (para Remover selecionados).
+- Instalar selecionados: uma linha sem .exe.config agora e instalada SEM editar a
+  configuracao. A confirmacao lista essas linhas, o log registra "CONFIG IGNORADO" e o
+  resultado aparece como "Sucesso (sem .config)". Depois, rode o Configurar e use
+  "Editar .config selecionados". Um .config existente mas invalido continua impedindo
+  a instalacao da linha.
+- Alterar login: se nao for possivel conceder "Log on as a service" (ex.: GPO), a
+  alteracao continua, com aviso no log e na tela; o resultado aparece como
+  "Login alterado (sem direito confirmado)". Use o teste de partida para validar.
+- Contas gMSA (DOMINIO\conta$): informe a conta com o campo Senha vazio.
+- Benner Server aceita porta opcional (ex.: servidor:8080). Confirme se a aplicacao
+  Benner aceita esse formato antes de usar.
+- Exemplos de nome no formulario usam nomes genericos.
