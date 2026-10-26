@@ -2,7 +2,7 @@
 
 Aplicativo em **Windows PowerShell 5.1 + Windows Forms** (Dark Mode grafite com detalhes vermelhos) para localizar, configurar, instalar e gerenciar em lote os serviços **Benner Workflow** em Windows Server.
 
-> **Situação:** o código-fonte ainda não foi importado para este repositório. A fonte de verdade é o pacote `BennerWorkflowInstaller_config_inicial.zip`. Nenhuma funcionalidade foi testada em Windows até o momento.
+> **Situação:** código importado do pacote `BennerWorkflowInstaller_config_inicial.zip`. **Nada foi executado em Windows até o momento.** Veja a cobertura dos requisitos e os pontos de atenção em [docs/REVISAO_REQUISITOS.md](docs/REVISAO_REQUISITOS.md).
 
 ## Funcionalidades previstas
 
@@ -23,14 +23,18 @@ Aplicativo em **Windows PowerShell 5.1 + Windows Forms** (Dark Mode grafite com 
 
 ## Uso
 
-Será documentado quando o script for importado para `src/`.
+1. Copie para o servidor a pasta `src/` (e, opcionalmente, `assets/benner-logo.png` para dentro dela ou para `assets/` ao lado de `src/`).
+2. Execute `src\Iniciar-Instalador.cmd` e aceite o UAC. Ele abre `BennerWorkflowInstaller.ps1` elevado, em STA, com `-ExecutionPolicy Bypass` apenas para esse processo.
+3. Informe o diretório base (padrão `E:\Benner\WFL`) e clique em **Buscar pastas**.
+
+O passo a passo completo e as limitações de cada função estão em [docs/LEIA-ME.txt](docs/LEIA-ME.txt).
 
 ## Estrutura
 
 ```text
-src/      código-fonte PowerShell (a importar do ZIP)
-assets/   recursos visuais (ex.: benner-logo.png, opcional)
-docs/     contexto e requisitos do projeto
+src/      BennerWorkflowInstaller.ps1 e Iniciar-Instalador.cmd
+assets/   benner-logo.png (aproximação estilizada, não é o logo oficial)
+docs/     contexto, LEIA-ME original do pacote e revisão de requisitos
 ```
 
 Detalhes completos em [docs/CONTEXTO_BENNER_WORKFLOW_INSTALLER.md](docs/CONTEXTO_BENNER_WORKFLOW_INSTALLER.md).

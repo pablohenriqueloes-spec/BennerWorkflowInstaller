@@ -5,6 +5,7 @@
 *.config
 *.config.bak
 *.config.*.bak
+*.config.backup_*
 *.bak
 # Exemplos sanitizados podem ser versionados explicitamente:
 !*.config.example
