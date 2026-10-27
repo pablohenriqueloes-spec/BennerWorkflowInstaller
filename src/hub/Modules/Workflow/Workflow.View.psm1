@@ -128,7 +128,7 @@ function Update-Commands {
         'CopySourceBox', 'CopySourceBrowse', 'CopyTargetBox', 'CopyTargetBrowse', 'CopyListButton', 'NewTargetBox', 'AddTargetButton') { $script:UI[$n].IsEnabled = -not $busy }
     $script:UI.CopyGrid.IsReadOnly = $f.Copying
     $script:UI.CopyButton.IsEnabled = ($copyCount -gt 0 -and -not $busy)
-    $script:UI.CheckChildrenButton.IsEnabled = (-not $busy -and @(Get-CheckedRows $script:CopyRows 'Copy' | Where-Object { $_['Level'] -eq 0 }).Count -gt 0)
+    $script:UI.CheckChildrenButton.IsEnabled = (-not $busy -and @((Get-CheckedRows $script:CopyRows 'Copy') | Where-Object { $_['Level'] -eq 0 }).Count -gt 0)
     $script:UI.FoundGrid.IsReadOnly = ($f.Installing -or $f.Unlocking -or $f.EditingConfig)
     $script:UI.InstalledGrid.IsReadOnly = ($f.Removing -or $f.ChangingLogin)
     $canInstall = ($installCount -gt 0 -and -not $busy)
@@ -311,25 +311,91 @@ function Invoke-ListCopyTargets {
     Update-CopySelection
 }
 
+# "Adicionar": cria de fato as pastas (varios nomes separados por ; ou ,) dentro de cada pasta
+# marcada na grade, ou na raiz de destino quando nada esta marcado. As pastas criadas dentro das
+# subpastas ficam marcadas como destino e a subpasta mae e desmarcada.
 function Invoke-AddCopyTarget {
     if (Test-WorkflowViewBusy) { return }
-    $name = $script:UI.NewTargetBox.Text.Trim()
+    Commit-Grid $script:UI.CopyGrid
     $root = $script:UI.CopyTargetBox.Text.Trim().TrimEnd('\')
-    if (-not $name) { return }
-    if ($name -match '[\\/:*?"<>|]' -or $name -eq '.' -or $name -eq '..') {
-        Show-HubMessage -Text "Nome de subpasta inválido: '$name'. Informe só o nome, sem \ / : * ? `" < > |" -Title 'Nome inválido' -Kind Warning | Out-Null; return
+    $names = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($n in ($script:UI.NewTargetBox.Text -split '[;,]')) {
+        $n = $n.Trim()
+        if ($n -and -not ($names -contains $n)) { $names.Add($n) }
+    }
+    if ($names.Count -eq 0) { return }
+    $bad = @($names | Where-Object { -not (Test-WorkflowFolderName -Name $_) })
+    if ($bad.Count -gt 0) {
+        Show-HubMessage -Text ("Nome(s) de pasta inválido(s):`r`n" + ($bad -join "`r`n") + "`r`n`r`nInforme só o nome, sem \ / : * ? `" < > |. Para várias pastas, separe com ; ou ,") -Title 'Nome inválido' -Kind Warning | Out-Null; return
     }
     if (-not (Test-Path -LiteralPath $root -PathType Container)) {
         Show-HubMessage -Text "Pasta de destino não encontrada: $root" -Title 'Destino inválido' -Kind Warning | Out-Null; return
     }
-    $path = Join-Path $root $name
-    $existing = @($script:CopyRows | Where-Object { [string]$_['Path'] -ieq $path })
-    if ($existing.Count -gt 0) { $existing[0]['Copy'] = $true; $script:UI.NewTargetBox.Clear(); return }
-    $exists = Test-Path -LiteralPath $path -PathType Container
-    $count = $(if ($exists) { @(Get-ChildItem -LiteralPath $path -File -Filter '*.config' -Force -ErrorAction SilentlyContinue).Count } else { 0 })
-    $script:CopyRows.Add((New-CopyRow $name $path $count $exists $true 0 '' (Test-CopyHasChildren $path)))
+    $parents = Get-CheckedRows $script:CopyRows 'Copy'
+    $targets = New-Object 'System.Collections.Generic.List[object]'
+    if ($parents.Count -eq 0) {
+        foreach ($n in $names) { $targets.Add([pscustomobject]@{ Parent = $null; ParentPath = $root; Name = $n; Path = (Join-Path $root $n) }) }
+    } else {
+        foreach ($p in $parents) { foreach ($n in $names) { $targets.Add([pscustomobject]@{ Parent = $p; ParentPath = [string]$p['Path']; Name = $n; Path = (Join-Path ([string]$p['Path']) $n) }) } }
+    }
+    $lines = @($targets | ForEach-Object { $_.Path + $(if (Test-Path -LiteralPath $_.Path -PathType Container) { '  (já existe)' } else { '' }) })
+    $where = $(if ($parents.Count -eq 0) { "na pasta de destino (nenhuma pasta marcada na grade)" } else { "dentro de $($parents.Count) pasta(s) marcada(s)" })
+    $msg = "Criar $($targets.Count) pasta(s) $where`?`r`n`r`n" + (Format-CopyList $lines 15)
+    if ($parents.Count -gt 0) { $msg += "`r`n`r`nAs pastas criadas ficam marcadas como destino da cópia e as pastas mãe são desmarcadas." }
+    if ((Show-HubMessage -Text $msg -Title 'Criar pastas' -Kind Question -YesNo) -ne 'Yes') { return }
+
+    $log = New-HubLogFile -Directory $script:Settings.LogDirectory -Prefix 'Workflow_Pastas'
+    $failed = New-Object 'System.Collections.Generic.List[string]'
+    $notShown = New-Object 'System.Collections.Generic.List[string]'
+    $created = 0
+    $script:BulkUpdate = $true
+    try {
+        foreach ($t in $targets) {
+            try { $r = New-WorkflowTargetFolder -Parent $t.ParentPath -Name $t.Name -LogFile $log }
+            catch { $failed.Add("$($t.Path): $($_.Exception.Message)"); Write-HubLog -Path $log -Message "FALHA CRIANDO $($t.Path): $($_.Exception.Message)"; continue }
+            if ($r.Created) { $created++ }
+            if ($null -eq $t.Parent) {
+                $row = @($script:CopyRows | Where-Object { [string]$_['Path'] -ieq $r.Path }) | Select-Object -First 1
+                if ($null -eq $row) { $row = New-CopyRow $t.Name $r.Path 0 $true $false 0 '' (Test-CopyHasChildren $r.Path); $script:CopyRows.Add($row) }
+                $row['Copy'] = $true
+            } elseif ($t.Parent['Level'] -eq 0) {
+                $row = Add-CopyChildRow $t.Parent $t.Name $r.Path
+                $row['Copy'] = $true
+                $t.Parent['Copy'] = $false
+            } else {
+                # Pastas internas nao abrem (um nivel na grade): a pasta e criada, mas nao aparece.
+                $notShown.Add($r.Path)
+            }
+        }
+    } finally { $script:BulkUpdate = $false }
+    [System.Windows.Data.CollectionViewSource]::GetDefaultView($script:CopyRows).Refresh()
     $script:UI.NewTargetBox.Clear()
     Update-CopySelection
+    $script:UI.CopyStatusText.Text = "$created pasta(s) criada(s). Log: $log"
+    if ($failed.Count -gt 0 -or $notShown.Count -gt 0) {
+        $text = "$created pasta(s) criada(s)."
+        if ($failed.Count -gt 0) { $text += "`r`n`r`nNão foi possível criar:`r`n" + ($failed -join "`r`n") }
+        if ($notShown.Count -gt 0) { $text += "`r`n`r`nCriadas dentro de pastas internas (a grade mostra só um nível, então elas não aparecem):`r`n" + ($notShown -join "`r`n") }
+        Show-HubMessage -Text $text -Title 'Criar pastas' -Kind $(if ($failed.Count -gt 0) { 'Warning' } else { 'Info' }) | Out-Null
+    }
+}
+
+# Garante a linha de uma pasta interna recem-criada logo abaixo da subpasta mae (aberta).
+function Add-CopyChildRow($Parent, [string]$Name, [string]$Path) {
+    $Parent['HasChildren'] = $true
+    if ($Parent['ChildrenLoaded'] -ne $true) {
+        Set-CopyRowExpanded $Parent $true
+    } else {
+        $children = Get-CopyChildRows $Parent
+        $row = @($children | Where-Object { [string]$_['Path'] -ieq $Path }) | Select-Object -First 1
+        if ($null -eq $row) {
+            $row = New-CopyRow $Name $Path 0 $true $false 1 ([string]$Parent['Path']) $false
+            $after = $(if ($children.Count -gt 0) { $children[$children.Count - 1] } else { $Parent })
+            $script:CopyRows.Insert($script:CopyRows.IndexOf($after) + 1, $row)
+        }
+        Set-CopyRowExpanded $Parent $true
+    }
+    return @((Get-CopyChildRows $Parent) | Where-Object { [string]$_['Path'] -ieq $Path }) | Select-Object -First 1
 }
 
 function Test-CopyHasChildren([string]$Path) {
@@ -370,7 +436,7 @@ function Switch-CopyRowExpanded($Row) {
 function Invoke-CheckChildren {
     if (Test-WorkflowViewBusy) { return }
     Commit-Grid $script:UI.CopyGrid
-    $parents = @(Get-CheckedRows $script:CopyRows 'Copy' | Where-Object { $_['Level'] -eq 0 })
+    $parents = @((Get-CheckedRows $script:CopyRows 'Copy') | Where-Object { $_['Level'] -eq 0 })
     if ($parents.Count -eq 0) { return }
     $empty = New-Object 'System.Collections.Generic.List[string]'
     $script:BulkUpdate = $true

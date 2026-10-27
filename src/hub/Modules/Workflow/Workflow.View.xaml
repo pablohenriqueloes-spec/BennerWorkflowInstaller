@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   Tela do modulo Workflow. Ordem fixa: descoberta, grade de instalacao,
   previa/execucao/botoes e, por ultimo, servicos instalados.
@@ -41,9 +41,9 @@
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
               <Button x:Name="CheckChildrenButton" Content="Marcar pastas das subpastas" IsEnabled="False" Margin="0,0,18,0"
                       ToolTip="Para cada subpasta marcada: abre, marca todas as pastas de dentro e desmarca a subpasta (a cópia vai só para as pastas de dentro)."/>
-              <TextBlock Text="Nova subpasta" Style="{StaticResource Text.Muted}" Margin="0,0,10,0"/>
-              <TextBox x:Name="NewTargetBox" Width="200" ToolTip="Nome de uma subpasta que ainda não existe no destino. Ela será criada na cópia."/>
-              <Button x:Name="AddTargetButton" Content="Adicionar" Margin="8,0,0,0"/>
+              <TextBlock Text="Nova(s) pasta(s)" Style="{StaticResource Text.Muted}" Margin="0,0,10,0"/>
+              <TextBox x:Name="NewTargetBox" Width="220" ToolTip="Nome(s) da(s) pasta(s) a criar, separados por ; ou , (ex.: JURIDICO_HML; JURIDICO_PRD). Criadas dentro de cada pasta marcada na grade, ou na pasta de destino se nada estiver marcado."/>
+              <Button x:Name="AddTargetButton" Content="Adicionar" Margin="8,0,0,0" ToolTip="Cria as pastas agora, no disco."/>
             </StackPanel>
             <TextBlock x:Name="CopyTargetsText" Text="0 subpasta(s)" Style="{StaticResource Text.Muted}"/>
           </DockPanel>

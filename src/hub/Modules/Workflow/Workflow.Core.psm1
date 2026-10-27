@@ -56,6 +56,32 @@ function Get-WorkflowCopyTarget {
     }
 }
 
+function Test-WorkflowFolderName {
+    <# Nome simples de pasta (sem caminho): nao vazio, sem \ / : * ? " < > |, diferente de . e .., sem espaco/ponto no fim. #>
+    param([string]$Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if ($Name -match '[\\/:*?"<>|]' -or $Name -eq '.' -or $Name -eq '..' -or $Name -match '[ .]$') { return $false }
+    return ($Name.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -lt 0)
+}
+
+function New-WorkflowTargetFolder {
+    <#
+    Cria -Name dentro de -Parent (pasta vazia). Nao segue junctions: recusa -Parent que seja link.
+    Devolve Path e Created ($false quando ja existia).
+    #>
+    param([Parameter(Mandatory)][string]$Parent, [Parameter(Mandatory)][string]$Name, [string]$LogFile)
+    if (-not (Test-WorkflowFolderName -Name $Name)) { throw "Nome de pasta invalido: '$Name'" }
+    $item = Get-Item -LiteralPath $Parent -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer) { throw "Nao e uma pasta: $Parent" }
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Pasta e um link/junction, nao sera usada: $Parent" }
+    $path = Join-Path $item.FullName $Name
+    if (Test-Path -LiteralPath $path -PathType Container) { return [pscustomobject]@{ Path = $path; Created = $false } }
+    if (Test-Path -LiteralPath $path) { throw "Ja existe um arquivo com esse nome: $path" }
+    New-Item -ItemType Directory -Path $path -ErrorAction Stop | Out-Null
+    if ($LogFile) { Write-HubLog -Path $LogFile -Message "PASTA CRIADA | $path" }
+    return [pscustomobject]@{ Path = $path; Created = $true }
+}
+
 function Test-WorkflowCopyPaths {
     <# Problemas que impedem copiar de -Source para -Destination (vazio = pode copiar). #>
     param([string]$Source, [string]$Destination)
