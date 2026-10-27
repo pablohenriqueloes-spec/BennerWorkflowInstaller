@@ -41,14 +41,18 @@ function Get-WorkflowSettings {
 # substituido recebe backup <arquivo>.backup_<data>.
 # ---------------------------------------------------------------------------
 function Get-WorkflowCopyTarget {
-    <# Subpastas diretas da raiz de destino (sem junctions/links), com a quantidade de .config no primeiro nivel. #>
+    <#
+    Subpastas diretas de -Root (sem junctions/links), com a quantidade de .config no primeiro nivel
+    e HasChildren (se ha pastas dentro dela). Serve tanto para a raiz de destino quanto para abrir uma subpasta.
+    #>
     param([Parameter(Mandatory)][string]$Root)
     $base = $Root.Trim().TrimEnd('\')
     if (-not (Test-Path -LiteralPath $base -PathType Container)) { throw "Pasta de destino nao encontrada: $base" }
     foreach ($dir in @(Get-ChildItem -LiteralPath $base -Directory -Force -ErrorAction Stop | Sort-Object Name)) {
         if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
         $configs = @(Get-ChildItem -LiteralPath $dir.FullName -File -Filter '*.config' -Force -ErrorAction SilentlyContinue)
-        [pscustomobject]@{ Name = $dir.Name; Path = $dir.FullName; ConfigCount = $configs.Count }
+        $children = @(Get-ChildItem -LiteralPath $dir.FullName -Directory -Force -ErrorAction SilentlyContinue | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 })
+        [pscustomobject]@{ Name = $dir.Name; Path = $dir.FullName; ConfigCount = $configs.Count; HasChildren = ($children.Count -gt 0) }
     }
 }
 

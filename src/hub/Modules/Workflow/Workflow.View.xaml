@@ -39,13 +39,15 @@
           </Grid>
           <DockPanel Margin="0,14,0,10">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button x:Name="CheckChildrenButton" Content="Marcar pastas das subpastas" IsEnabled="False" Margin="0,0,18,0"
+                      ToolTip="Para cada subpasta marcada: abre, marca todas as pastas de dentro e desmarca a subpasta (a cópia vai só para as pastas de dentro)."/>
               <TextBlock Text="Nova subpasta" Style="{StaticResource Text.Muted}" Margin="0,0,10,0"/>
               <TextBox x:Name="NewTargetBox" Width="200" ToolTip="Nome de uma subpasta que ainda não existe no destino. Ela será criada na cópia."/>
               <Button x:Name="AddTargetButton" Content="Adicionar" Margin="8,0,0,0"/>
             </StackPanel>
             <TextBlock x:Name="CopyTargetsText" Text="0 subpasta(s)" Style="{StaticResource Text.Muted}"/>
           </DockPanel>
-          <DataGrid x:Name="CopyGrid" Height="200">
+          <DataGrid x:Name="CopyGrid" Height="240" CanUserSortColumns="False">
             <DataGrid.Columns>
               <DataGridTemplateColumn Width="96" MinWidth="90">
                 <DataGridTemplateColumn.CellTemplate>
@@ -54,7 +56,17 @@
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTextColumn Header="Subpasta" Binding="{Binding [Name]}" IsReadOnly="True" Width="200" ElementStyle="{StaticResource CellMono}"/>
+              <DataGridTemplateColumn Header="Subpasta" Width="240" MinWidth="120" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <StackPanel Orientation="Horizontal" Margin="{Binding [Indent]}">
+                      <Button Tag="Expand" Style="{StaticResource Btn.Ghost}" Width="26" Height="22" Padding="0" FontSize="10" FontWeight="Normal"
+                              Content="{Binding [ExpandGlyph]}" Visibility="{Binding [ExpandVisibility]}" ToolTip="{Binding [ExpandTip]}"/>
+                      <TextBlock Text="{Binding [Name]}" Style="{StaticResource CellMono}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
               <DataGridTextColumn Header="Caminho de destino" Binding="{Binding [Path]}" IsReadOnly="True" Width="380" ElementStyle="{StaticResource CellMono}"/>
               <DataGridTemplateColumn Header=".config no destino" Width="150" MinWidth="110" IsReadOnly="True">
                 <DataGridTemplateColumn.CellTemplate>

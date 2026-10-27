@@ -128,6 +128,7 @@ function Update-Commands {
         'CopySourceBox', 'CopySourceBrowse', 'CopyTargetBox', 'CopyTargetBrowse', 'CopyListButton', 'NewTargetBox', 'AddTargetButton') { $script:UI[$n].IsEnabled = -not $busy }
     $script:UI.CopyGrid.IsReadOnly = $f.Copying
     $script:UI.CopyButton.IsEnabled = ($copyCount -gt 0 -and -not $busy)
+    $script:UI.CheckChildrenButton.IsEnabled = (-not $busy -and @(Get-CheckedRows $script:CopyRows 'Copy' | Where-Object { $_['Level'] -eq 0 }).Count -gt 0)
     $script:UI.FoundGrid.IsReadOnly = ($f.Installing -or $f.Unlocking -or $f.EditingConfig)
     $script:UI.InstalledGrid.IsReadOnly = ($f.Removing -or $f.ChangingLogin)
     $canInstall = ($installCount -gt 0 -and -not $busy)
@@ -261,15 +262,31 @@ function Get-CopyConfigBadge([int]$Count, [bool]$Exists) {
 }
 
 function Update-CopySelection {
-    $checked = (Get-CheckedRows $script:CopyRows 'Copy').Count
-    $script:UI.CopyTargetsText.Text = "$($script:CopyRows.Count) subpasta(s), $checked selecionada(s)"
+    $checkedRows = Get-CheckedRows $script:CopyRows 'Copy'
+    $hidden = Get-HiddenCount $checkedRows
+    $top = @($script:CopyRows | Where-Object { $_['Level'] -eq 0 }).Count
+    $text = "$top subpasta(s), $($checkedRows.Count) destino(s) marcado(s)"
+    if ($hidden -gt 0) { $text += " ($hidden em subpasta recolhida)" }
+    $script:UI.CopyTargetsText.Text = $text
     Update-Commands
 }
 
-function New-CopyRow([string]$Name, [string]$Path, [int]$ConfigCount, [bool]$Exists, [bool]$Checked) {
+# Flechinha da subpasta: so aparece quando ha pastas dentro (um nivel: pastas internas nao abrem).
+function Set-CopyExpandState($Row) {
+    $can = ($Row['Level'] -eq 0 -and $Row['HasChildren'] -eq $true)
+    $Row['ExpandVisibility'] = $(if ($can) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Hidden })
+    $Row['ExpandGlyph'] = $(if ($Row['Expanded'] -eq $true) { [string][char]0x25B2 } else { [string][char]0x25BC })
+    $Row['ExpandTip'] = $(if ($Row['Expanded'] -eq $true) { 'Recolher as pastas de dentro' } else { 'Ver as pastas de dentro' })
+}
+
+function New-CopyRow([string]$Name, [string]$Path, [int]$ConfigCount, [bool]$Exists, [bool]$Checked, [int]$Level = 0, [string]$ParentPath = '', [bool]$HasChildren = $false) {
     $row = New-Object BennerHub.HubRow
     $row['Copy'] = $Checked
     $row['Name'] = $Name; $row['Path'] = $Path
+    $row['Level'] = $Level; $row['ParentPath'] = $ParentPath
+    $row['HasChildren'] = $HasChildren; $row['Expanded'] = $false; $row['ChildrenLoaded'] = $false
+    $row['Indent'] = New-Object System.Windows.Thickness ((22 * $Level), 0, 0, 0)
+    Set-CopyExpandState $row
     $badge = Get-CopyConfigBadge $ConfigCount $Exists
     Set-RowState $row 'ConfigInfo' $badge[0] $badge[1]
     Set-RowState $row 'CopyStatus' 'Não executado'
@@ -287,7 +304,7 @@ function Invoke-ListCopyTargets {
     }
     $script:CopyRows.Clear()
     foreach ($item in @(Get-WorkflowCopyTarget -Root $root)) {
-        $script:CopyRows.Add((New-CopyRow $item.Name $item.Path $item.ConfigCount $true $false))
+        $script:CopyRows.Add((New-CopyRow $item.Name $item.Path $item.ConfigCount $true $false 0 '' $item.HasChildren))
     }
     $script:UI.CopyProgress.Value = 0
     $script:UI.CopyStatusText.Text = 'Selecione as subpastas de destino.'
@@ -310,9 +327,67 @@ function Invoke-AddCopyTarget {
     if ($existing.Count -gt 0) { $existing[0]['Copy'] = $true; $script:UI.NewTargetBox.Clear(); return }
     $exists = Test-Path -LiteralPath $path -PathType Container
     $count = $(if ($exists) { @(Get-ChildItem -LiteralPath $path -File -Filter '*.config' -Force -ErrorAction SilentlyContinue).Count } else { 0 })
-    $script:CopyRows.Add((New-CopyRow $name $path $count $exists $true))
+    $script:CopyRows.Add((New-CopyRow $name $path $count $exists $true 0 '' (Test-CopyHasChildren $path)))
     $script:UI.NewTargetBox.Clear()
     Update-CopySelection
+}
+
+function Test-CopyHasChildren([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    return (@(Get-ChildItem -LiteralPath $Path -Directory -Force -ErrorAction SilentlyContinue | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 }).Count -gt 0)
+}
+
+# Carrega (uma vez) as pastas de dentro de uma subpasta e as insere logo abaixo dela.
+function Get-CopyChildRows($Row) {
+    if ($Row['ChildrenLoaded'] -ne $true) {
+        $index = $script:CopyRows.IndexOf($Row)
+        foreach ($item in @(Get-WorkflowCopyTarget -Root ([string]$Row['Path']))) {
+            $index++
+            $script:CopyRows.Insert($index, (New-CopyRow $item.Name $item.Path $item.ConfigCount $true $false 1 ([string]$Row['Path']) $false))
+        }
+        $Row['ChildrenLoaded'] = $true
+    }
+    return , @($script:CopyRows | Where-Object { $_['Level'] -eq 1 -and [string]$_['ParentPath'] -ieq [string]$Row['Path'] })
+}
+
+function Set-CopyRowExpanded($Row, [bool]$Expanded) {
+    $children = Get-CopyChildRows $Row
+    foreach ($child in $children) { $child['Visible'] = $Expanded }
+    $Row['Expanded'] = $Expanded
+    if ($children.Count -eq 0) { $Row['HasChildren'] = $false; $Row['Expanded'] = $false }
+    Set-CopyExpandState $Row
+    [System.Windows.Data.CollectionViewSource]::GetDefaultView($script:CopyRows).Refresh()
+}
+
+function Switch-CopyRowExpanded($Row) {
+    if ($script:Flags.Copying -or $Row['Level'] -ne 0) { return }
+    # Encerra edicao pendente: inserir linhas ou refiltrar durante uma edicao gera erro no WPF.
+    Commit-Grid $script:UI.CopyGrid
+    Set-CopyRowExpanded $Row (-not ($Row['Expanded'] -eq $true))
+    Update-CopySelection
+}
+
+function Invoke-CheckChildren {
+    if (Test-WorkflowViewBusy) { return }
+    Commit-Grid $script:UI.CopyGrid
+    $parents = @(Get-CheckedRows $script:CopyRows 'Copy' | Where-Object { $_['Level'] -eq 0 })
+    if ($parents.Count -eq 0) { return }
+    $empty = New-Object 'System.Collections.Generic.List[string]'
+    $script:BulkUpdate = $true
+    try {
+        foreach ($parent in $parents) {
+            if ($parent['HasChildren'] -ne $true) { $empty.Add([string]$parent['Name']); continue }
+            Set-CopyRowExpanded $parent $true
+            $children = Get-CopyChildRows $parent
+            if ($children.Count -eq 0) { $empty.Add([string]$parent['Name']); continue }
+            foreach ($child in $children) { $child['Copy'] = $true }
+            $parent['Copy'] = $false
+        }
+    } finally { $script:BulkUpdate = $false }
+    Update-CopySelection
+    if ($empty.Count -gt 0) {
+        Show-HubMessage -Text ("Estas subpastas não têm pastas dentro e continuam marcadas como destino:`r`n" + ($empty -join "`r`n")) -Title 'Marcar pastas das subpastas' | Out-Null
+    }
 }
 
 function Format-CopyList([string[]]$Items, [int]$Max = 6) {
@@ -351,6 +426,8 @@ function Invoke-CopyFolders {
         }
     }
     $bulk = $(if ($jobs.Count -gt 2) { "ATENÇÃO: $($jobs.Count) destinos serão afetados por esta ação.`r`n`r`n" } else { '' })
+    $hidden = Get-HiddenCount $rows
+    if ($hidden -gt 0) { $bulk += "$hidden deles estão em subpastas recolhidas na grade.`r`n`r`n" }
     $msg = $bulk + "Copiar e substituir o conteúdo de:`r`n  $source`r`n`r`npara $($jobs.Count) destino(s):`r`n" + ($lines -join "`r`n") + "`r`n`r`nArquivos com o mesmo nome no destino serão sobrescritos. Nada é apagado do destino."
     if ($running.Count -gt 0) { $msg += "`r`n`r`nATENÇÃO: há serviços em execução nestas pastas. Arquivos em uso não serão substituídos e a cópia pode falhar para esses destinos:`r`n" + ($running -join "`r`n") }
     if ($replacedTotal -gt 0) {
@@ -427,6 +504,7 @@ function Finish-Copy {
         $count = $(if ($exists) { @(Get-ChildItem -LiteralPath $path -File -Filter '*.config' -Force -ErrorAction SilentlyContinue).Count } else { 0 })
         $badge = Get-CopyConfigBadge $count $exists
         Set-RowState $job.Row 'ConfigInfo' $badge[0] $badge[1]
+        if ($job.Row['Level'] -eq 0 -and $job.Row['ChildrenLoaded'] -ne $true) { $job.Row['HasChildren'] = (Test-CopyHasChildren $path); Set-CopyExpandState $job.Row }
     }
     $script:UI.CopyProgress.Value = 100
     $script:UI.CopyStatusText.Text = "Cópia concluída: $ok sucesso(s), $failed falha(s)."
@@ -901,6 +979,7 @@ function New-WorkflowView {
     $visibleOnly = [Predicate[object]] { param($r) return ($r['Visible'] -eq $true) }
     [System.Windows.Data.CollectionViewSource]::GetDefaultView($script:FoundRows).Filter = $visibleOnly
     [System.Windows.Data.CollectionViewSource]::GetDefaultView($script:InstalledRows).Filter = $visibleOnly
+    [System.Windows.Data.CollectionViewSource]::GetDefaultView($script:CopyRows).Filter = $visibleOnly
     $ui.CopySourceBox.Text = $script:Settings.CopySource
     $ui.CopyTargetBox.Text = $script:Settings.CopyTarget
     $ui.CopyGrid.ItemsSource = $script:CopyRows
@@ -928,6 +1007,16 @@ function New-WorkflowView {
     $ui.AddTargetButton.Add_Click({ Invoke-HubSafe { Invoke-AddCopyTarget } })
     $ui.NewTargetBox.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { Invoke-HubSafe { Invoke-AddCopyTarget } } })
     $ui.CopyButton.Add_Click({ Invoke-HubSafe { Invoke-CopyFolders } -Title 'Falha na copia' })
+    $ui.CheckChildrenButton.Add_Click({ Invoke-HubSafe { Invoke-CheckChildren } -Title 'Falha ao marcar pastas' })
+    # Flechinha da coluna Subpasta (dentro do modelo da celula): um unico tratador na grade.
+    $ui.CopyGrid.AddHandler([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent, [System.Windows.RoutedEventHandler] {
+            param($s, $e)
+            $src = $e.OriginalSource
+            if ($src -is [System.Windows.Controls.Button] -and [string]$src.Tag -eq 'Expand' -and $src.DataContext -is [BennerHub.HubRow]) {
+                $e.Handled = $true
+                Invoke-HubSafe { Switch-CopyRowExpanded $src.DataContext } -Title 'Falha ao abrir a subpasta'
+            }
+        })
 
     $ui.BrowseButton.Add_Click({ Invoke-HubSafe {
                 $path = Select-HubFolder -Description 'Selecione o diretório base de Workflow (WFL)' -InitialPath $script:UI.RootBox.Text
