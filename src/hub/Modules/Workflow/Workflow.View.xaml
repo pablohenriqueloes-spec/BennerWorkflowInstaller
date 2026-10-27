@@ -1,0 +1,332 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tela do modulo Workflow. Ordem fixa: descoberta, grade de instalacao,
+  previa/execucao/botoes e, por ultimo, servicos instalados.
+  Os cabecalhos com "marcar todos" das colunas de selecao sao criados no codigo.
+-->
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="28,4,28,20">
+
+      <!-- 0. Criar/atualizar pastas a partir da origem -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="CRIAR/ATUALIZAR PASTA" Style="{StaticResource Text.Eyebrow}" Margin="0,0,10,0"/>
+            <TextBlock Text="Copiar e substituir a partir da origem" Style="{StaticResource Text.Section}"/>
+          </StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="18"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Origem (de onde copiar)" Style="{StaticResource Text.Label}"/>
+            <TextBox x:Name="CopySourceBox" Grid.Row="1" Grid.Column="0" FontFamily="{StaticResource Font.Mono}" Text="E:\Benner\WorkflowService"/>
+            <Button x:Name="CopySourceBrowse" Grid.Row="1" Grid.Column="1" Content="Procurar..." Margin="10,0,0,0"/>
+            <TextBlock Grid.Row="0" Grid.Column="3" Text="Destino (subpastas serão listadas)" Style="{StaticResource Text.Label}"/>
+            <TextBox x:Name="CopyTargetBox" Grid.Row="1" Grid.Column="3" FontFamily="{StaticResource Font.Mono}" Text="E:\Benner\Ferramentas\WFL"/>
+            <Button x:Name="CopyTargetBrowse" Grid.Row="1" Grid.Column="4" Content="Procurar..." Margin="10,0,0,0"/>
+            <Button x:Name="CopyListButton" Grid.Row="1" Grid.Column="5" Content="Listar subpastas" Style="{StaticResource Btn.Primary}" Margin="10,0,0,0"/>
+          </Grid>
+          <DockPanel Margin="0,14,0,10">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button x:Name="CheckChildrenButton" Content="Marcar pastas das subpastas" IsEnabled="False" Margin="0,0,18,0"
+                      ToolTip="Para cada subpasta marcada: abre, marca todas as pastas de dentro e desmarca a subpasta (a cópia vai só para as pastas de dentro)."/>
+              <TextBlock Text="Nova(s) pasta(s)" Style="{StaticResource Text.Muted}" Margin="0,0,10,0"/>
+              <TextBox x:Name="NewTargetBox" Width="220" ToolTip="Nome(s) da(s) pasta(s) a criar, separados por ; ou , (ex.: JURIDICO_HML; JURIDICO_PRD). Criadas dentro de cada pasta marcada na grade, ou na pasta de destino se nada estiver marcado."/>
+              <Button x:Name="AddTargetButton" Content="Adicionar" Margin="8,0,0,0" ToolTip="Cria as pastas agora, no disco."/>
+            </StackPanel>
+            <TextBlock x:Name="CopyTargetsText" Text="0 subpasta(s)" Style="{StaticResource Text.Muted}"/>
+          </DockPanel>
+          <DataGrid x:Name="CopyGrid" Height="240" CanUserSortColumns="False">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="96" MinWidth="90">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox Style="{StaticResource CellCheck}" IsChecked="{Binding [Copy], UpdateSourceTrigger=PropertyChanged}"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Subpasta" Width="240" MinWidth="120" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <StackPanel Orientation="Horizontal" Margin="{Binding [Indent]}">
+                      <Button Tag="Expand" Style="{StaticResource Btn.Ghost}" Width="26" Height="22" Padding="0" FontSize="10" FontWeight="Normal"
+                              Content="{Binding [ExpandGlyph]}" Visibility="{Binding [ExpandVisibility]}" ToolTip="{Binding [ExpandTip]}"/>
+                      <TextBlock Text="{Binding [Name]}" Style="{StaticResource CellMono}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Caminho de destino" Binding="{Binding [Path]}" IsReadOnly="True" Width="380" ElementStyle="{StaticResource CellMono}"/>
+              <DataGridTemplateColumn Header=".config no destino" Width="150" MinWidth="110" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [ConfigInfoKind]}"><TextBlock Text="{Binding [ConfigInfo]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Resultado" Width="Auto" MinWidth="160" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [CopyStatusKind]}"><TextBlock Text="{Binding [CopyStatus]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+          <DockPanel Margin="0,12,0,0">
+            <Button x:Name="CopyButton" DockPanel.Dock="Right" Content="Copiar e substituir nos selecionados" Style="{StaticResource Btn.Primary}" IsEnabled="False" Margin="12,0,0,0"/>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock x:Name="CopyStatusText" Text="Selecione as subpastas de destino." Style="{StaticResource Text.Muted}" Margin="0,0,0,6"/>
+              <ProgressBar x:Name="CopyProgress" Minimum="0" Maximum="100" Value="0"/>
+            </StackPanel>
+          </DockPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- 1. Descoberta -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="DESCOBERTA" Style="{StaticResource Text.Eyebrow}" Margin="0,0,10,0"/>
+            <TextBlock Text="Pastas com o Runtime do Workflow" Style="{StaticResource Text.Section}"/>
+          </StackPanel>
+          <TextBlock Text="Diretório base dos Workflows" Style="{StaticResource Text.Label}"/>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="RootBox" Grid.Column="0" FontFamily="{StaticResource Font.Mono}" Text="E:\Benner\WFL"/>
+            <Button x:Name="BrowseButton" Grid.Column="1" Content="Procurar..." Margin="10,0,0,0"/>
+            <Button x:Name="ScanButton" Grid.Column="2" Content="Buscar pastas" Style="{StaticResource Btn.Primary}" Margin="10,0,0,0"/>
+          </Grid>
+          <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+            <CheckBox x:Name="IncludeFirstCheck" Content="Incluir VARIAVEL1 no nome do serviço" IsChecked="True"/>
+            <TextBlock x:Name="SampleText" Text="Exemplo: AMBIENTE_SISTEMA_PRJ" Style="{StaticResource Text.Muted}" Margin="18,0,0,0"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- 2. Grade de instalacao -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <DockPanel Margin="0,0,0,10" LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button x:Name="MarkAllButton" Content="Marcar todos" Style="{StaticResource Btn.Ghost}"/>
+              <Button x:Name="UnmarkAllButton" Content="Desmarcar todos" Style="{StaticResource Btn.Ghost}" Margin="8,0,0,0"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="INSTALAÇÃO" Style="{StaticResource Text.Eyebrow}" Margin="0,0,10,0"/>
+              <TextBlock Text="Serviços encontrados" Style="{StaticResource Text.Section}"/>
+              <TextBlock x:Name="FoundText" Text="0 serviço(s) encontrado(s)" Style="{StaticResource Text.Muted}" Margin="12,0,0,0"/>
+            </StackPanel>
+          </DockPanel>
+          <Grid Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="300"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Pesquisar" Style="{StaticResource Text.Muted}" Margin="0,0,10,0"/>
+            <TextBox x:Name="FoundSearch" Grid.Column="1"
+                     ToolTip="Filtra por trecho em qualquer coluna (sem diferenciar maiúsculas). Use % ou * como curinga. Esc limpa."/>
+            <TextBlock x:Name="FoundAlert" Grid.Column="2" Style="{StaticResource Text.Alert}" Margin="14,0,0,0" Visibility="Collapsed"/>
+          </Grid>
+          <DataGrid x:Name="FoundGrid" Height="340">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="96" MinWidth="90">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox Style="{StaticResource CellCheck}" IsChecked="{Binding [Install], UpdateSourceTrigger=PropertyChanged}"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Width="124" MinWidth="118">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox Style="{StaticResource CellCheck}" IsChecked="{Binding [Unlock], UpdateSourceTrigger=PropertyChanged}"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="VARIAVEL1" Binding="{Binding [First]}" IsReadOnly="True" Width="130" MinWidth="90" ElementStyle="{StaticResource CellText}"/>
+              <DataGridTextColumn Header="VARIAVEL2" Binding="{Binding [Second]}" IsReadOnly="True" Width="130" MinWidth="90" ElementStyle="{StaticResource CellText}"/>
+              <DataGridTextColumn Header="Nome do serviço (editável)" Binding="{Binding [ServiceName]}" Width="230" MinWidth="160"
+                                  ElementStyle="{StaticResource CellMono}" EditingElementStyle="{StaticResource CellEdit}"/>
+              <DataGridTextColumn Header="Benner Server" Binding="{Binding [SuperServerHost]}" Width="170" MinWidth="120"
+                                  ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEdit}"/>
+              <DataGridTextColumn Header="SYSTEMNAME" Binding="{Binding [SystemName]}" Width="140" MinWidth="100"
+                                  ElementStyle="{StaticResource CellMono}" EditingElementStyle="{StaticResource CellEdit}"/>
+              <DataGridTextColumn Header="Usuário" Binding="{Binding [WorkflowUser]}" Width="100" MinWidth="80"
+                                  ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEdit}"/>
+              <DataGridTextColumn Header="Usuário notificação" Binding="{Binding [NotifySenderUser]}" Width="140" MinWidth="110"
+                                  ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEdit}"/>
+              <DataGridTemplateColumn Header=".config" Width="Auto" MinWidth="110" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [ConfigTextKind]}"><TextBlock Text="{Binding [ConfigText]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Resultado" Width="Auto" MinWidth="130" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [StatusKind]}"><TextBlock Text="{Binding [Status]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Desbloqueio" Width="Auto" MinWidth="110" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [UnlockStatusKind]}"><TextBlock Text="{Binding [UnlockStatus]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+        </StackPanel>
+      </Border>
+
+      <!-- 3. Previa, execucao e botoes -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="1.3*"/>
+              <ColumnDefinition Width="20"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0">
+              <DockPanel Margin="0,0,0,8">
+                <TextBlock x:Name="SelectedCountText" DockPanel.Dock="Right" Text="0 selecionado(s)" Style="{StaticResource Text.Muted}"/>
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="PRÉVIA" Style="{StaticResource Text.Eyebrow}" Margin="0,0,10,0"/>
+                  <TextBlock Text="Comandos selecionados" Style="{StaticResource Text.Section}"/>
+                </StackPanel>
+              </DockPanel>
+              <TextBox x:Name="PreviewBox" Style="{StaticResource CodeBox}" Height="118"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="EXECUÇÃO" Style="{StaticResource Text.Eyebrow}" Margin="0,0,10,0"/>
+                <TextBlock Text="Andamento do lote" Style="{StaticResource Text.Section}"/>
+              </StackPanel>
+              <TextBlock x:Name="SummaryText" Text="0 serviço(s) selecionado(s) para instalação" FontWeight="SemiBold" Margin="0,4,0,6"/>
+              <TextBlock x:Name="ProgressText" Text="Pronto" Style="{StaticResource Text.Muted}" Margin="0,0,0,10"/>
+              <ProgressBar x:Name="Progress" Minimum="0" Maximum="100" Value="0"/>
+              <TextBlock Text="Logs em C:\ProgramData\Benner\WorkflowInstaller\Logs" Style="{StaticResource Text.Muted}" FontSize="11.5" Margin="0,10,0,0"/>
+            </StackPanel>
+          </Grid>
+          <Border Height="1" Background="{StaticResource Brush.Line}" Margin="0,14,0,12"/>
+          <DockPanel LastChildFill="False">
+            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+              <Button x:Name="InitialConfigButton" Content="Abrir Configurar (inicial)" IsEnabled="False"/>
+              <Button x:Name="EditConfigButton" Content="Editar .config selecionados" IsEnabled="False" Margin="8,0,0,0"/>
+              <Button x:Name="LogsButton" Content="Abrir logs" Style="{StaticResource Btn.Ghost}" Margin="8,0,0,0"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button x:Name="UnlockButton" Content="Desbloquear marcados" Style="{StaticResource Btn.Light}" IsEnabled="False"/>
+              <Button x:Name="InstallButton" Content="Instalar selecionados" Style="{StaticResource Btn.Primary}" IsEnabled="False" Margin="8,0,0,0"/>
+            </StackPanel>
+          </DockPanel>
+        </StackPanel>
+      </Border>
+
+      <!-- 4. Servicos instalados -->
+      <Border Style="{StaticResource Card}" Margin="0">
+        <StackPanel>
+          <DockPanel Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <Button x:Name="RefreshButton" Content="Atualizar lista" Style="{StaticResource Btn.Ghost}"/>
+              <Button x:Name="RemoveButton" Content="Remover selecionados..." Style="{StaticResource Btn.Danger}" IsEnabled="False" Margin="8,0,0,0"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="INSTALADOS" Style="{StaticResource Text.Eyebrow}" Margin="0,0,10,0"/>
+              <TextBlock x:Name="InstalledTitle" Text="Workflow Services instalados no Windows" Style="{StaticResource Text.Section}"/>
+            </StackPanel>
+          </DockPanel>
+          <WrapPanel Margin="0,0,0,10">
+            <StackPanel Margin="0,0,12,0">
+              <TextBlock Text="Usuário do Windows (DOMINIO\usuario)" Style="{StaticResource Text.Label}"/>
+              <TextBox x:Name="AccountBox" Width="260" Text="DOMINIO\usuario"/>
+            </StackPanel>
+            <StackPanel Margin="0,0,12,0">
+              <TextBlock Text="Senha (vazia para gMSA)" Style="{StaticResource Text.Label}"/>
+              <PasswordBox x:Name="PasswordInput" Width="220"/>
+            </StackPanel>
+            <Button x:Name="ChangeLoginButton" Content="Alterar login selecionados" Style="{StaticResource Btn.Info}"
+                    IsEnabled="False" VerticalAlignment="Bottom"/>
+          </WrapPanel>
+          <Grid Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="300"/>
+              <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="Pesquisar" Style="{StaticResource Text.Muted}" Margin="0,0,10,0"/>
+            <TextBox x:Name="InstalledSearch" Grid.Column="1"
+                     ToolTip="Filtra por trecho em qualquer coluna (sem diferenciar maiúsculas). Use % ou * como curinga. Esc limpa."/>
+            <TextBlock x:Name="InstalledAlert" Grid.Column="2" Style="{StaticResource Text.Alert}" Margin="14,0,0,0" Visibility="Collapsed"/>
+          </Grid>
+          <DataGrid x:Name="InstalledGrid" Height="250">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="84" MinWidth="80">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox Style="{StaticResource CellCheck}" IsChecked="{Binding [LoginSel], UpdateSourceTrigger=PropertyChanged}"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Width="104" MinWidth="98">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox Style="{StaticResource CellCheck}" IsChecked="{Binding [Remove], UpdateSourceTrigger=PropertyChanged}"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Nome interno" Binding="{Binding [Name]}" IsReadOnly="True" Width="220" MinWidth="140" ElementStyle="{StaticResource CellMono}"/>
+              <DataGridTextColumn Header="Nome exibido" Binding="{Binding [Display]}" IsReadOnly="True" Width="240" MinWidth="140" ElementStyle="{StaticResource CellText}"/>
+              <DataGridTemplateColumn Header="Status" Width="Auto" MinWidth="100" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [StateKind]}"><TextBlock Text="{Binding [State]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Conta de logon" Binding="{Binding [StartName]}" IsReadOnly="True" Width="170" MinWidth="110" ElementStyle="{StaticResource CellMono}"/>
+              <DataGridTextColumn Header="Pasta do executável" Binding="{Binding [Folder]}" IsReadOnly="True" Width="340" MinWidth="180" ElementStyle="{StaticResource CellMono}"/>
+              <DataGridTemplateColumn Header="Erro" Width="280" MinWidth="120" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Button Style="{StaticResource Btn.Cell}" IsEnabled="{Binding [HasError]}" ToolTip="{Binding [ErrorTip]}">
+                      <TextBlock Text="{Binding [ErrorSummary]}" TextTrimming="CharacterEllipsis"/>
+                    </Button>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Resultado" Width="Auto" MinWidth="130" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [ResultKind]}"><TextBlock Text="{Binding [Result]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+        </StackPanel>
+      </Border>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

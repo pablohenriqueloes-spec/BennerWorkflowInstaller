@@ -1,8 +1,13 @@
 # Benner Workflow Installer
 
-Aplicativo em **Windows PowerShell 5.1 + Windows Forms** (Dark Mode grafite com detalhes vermelhos) para localizar, configurar, instalar e gerenciar em lote os serviços **Benner Workflow** em Windows Server.
+Ferramentas em **Windows PowerShell 5.1** para localizar, configurar, instalar e gerenciar em lote os serviços **Benner Workflow** em Windows Server.
 
-> **Situação:** código importado do pacote `BennerWorkflowInstaller_config_inicial.zip`. **Nada foi executado em Windows até o momento.** Veja a cobertura dos requisitos e os pontos de atenção em [docs/REVISAO_REQUISITOS.md](docs/REVISAO_REQUISITOS.md).
+Há duas interfaces com as mesmas funções:
+
+- **HUB Benner (WPF, nova):** `src/hub/Iniciar-BennerHub.cmd`. Janela com menu de módulos de configuração; o primeiro módulo é o **Workflow**. Cada etapa também pode ser chamada por script, sem abrir a tela. Veja [docs/HUB.md](docs/HUB.md).
+- **Instalador Windows Forms (anterior):** `src/Iniciar-Instalador.cmd`, mantido como alternativa.
+
+> **Situação:** **nada foi executado em Windows até o momento.** Veja a cobertura dos requisitos em [docs/REVISAO_REQUISITOS.md](docs/REVISAO_REQUISITOS.md) e o roteiro de teste do HUB em [docs/HUB.md](docs/HUB.md).
 
 ## Funcionalidades previstas
 
@@ -32,9 +37,10 @@ O passo a passo completo e as limitações de cada função estão em [docs/LEIA
 ## Estrutura
 
 ```text
-src/      BennerWorkflowInstaller.ps1 e Iniciar-Instalador.cmd
+src/      BennerWorkflowInstaller.ps1 e Iniciar-Instalador.cmd (Windows Forms)
+src/hub/  HUB Benner em WPF: núcleo, tema, menu e módulo Workflow
 assets/   benner-logo.png (aproximação estilizada, não é o logo oficial)
-docs/     contexto, LEIA-ME original do pacote e revisão de requisitos
+docs/     contexto, LEIA-ME original, revisão de requisitos e HUB.md
 ```
 
 Detalhes completos em [docs/CONTEXTO_BENNER_WORKFLOW_INSTALLER.md](docs/CONTEXTO_BENNER_WORKFLOW_INSTALLER.md).
