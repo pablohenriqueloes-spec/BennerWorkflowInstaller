@@ -9,6 +9,79 @@
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <StackPanel Margin="28,4,28,20">
 
+      <!-- 0. Criar/atualizar pastas a partir da origem -->
+      <Border Style="{StaticResource Card}">
+        <StackPanel>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+            <TextBlock Text="CRIAR/ATUALIZAR PASTA" Style="{StaticResource Text.Eyebrow}" Margin="0,0,10,0"/>
+            <TextBlock Text="Copiar e substituir a partir da origem" Style="{StaticResource Text.Section}"/>
+          </StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="18"/>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Origem (de onde copiar)" Style="{StaticResource Text.Label}"/>
+            <TextBox x:Name="CopySourceBox" Grid.Row="1" Grid.Column="0" FontFamily="{StaticResource Font.Mono}" Text="E:\Benner\WorkflowService"/>
+            <Button x:Name="CopySourceBrowse" Grid.Row="1" Grid.Column="1" Content="Procurar..." Margin="10,0,0,0"/>
+            <TextBlock Grid.Row="0" Grid.Column="3" Text="Destino (subpastas serão listadas)" Style="{StaticResource Text.Label}"/>
+            <TextBox x:Name="CopyTargetBox" Grid.Row="1" Grid.Column="3" FontFamily="{StaticResource Font.Mono}" Text="E:\Benner\Ferramentas\WFL"/>
+            <Button x:Name="CopyTargetBrowse" Grid.Row="1" Grid.Column="4" Content="Procurar..." Margin="10,0,0,0"/>
+            <Button x:Name="CopyListButton" Grid.Row="1" Grid.Column="5" Content="Listar subpastas" Style="{StaticResource Btn.Primary}" Margin="10,0,0,0"/>
+          </Grid>
+          <DockPanel Margin="0,14,0,10">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+              <TextBlock Text="Nova subpasta" Style="{StaticResource Text.Muted}" Margin="0,0,10,0"/>
+              <TextBox x:Name="NewTargetBox" Width="200" ToolTip="Nome de uma subpasta que ainda não existe no destino. Ela será criada na cópia."/>
+              <Button x:Name="AddTargetButton" Content="Adicionar" Margin="8,0,0,0"/>
+            </StackPanel>
+            <TextBlock x:Name="CopyTargetsText" Text="0 subpasta(s)" Style="{StaticResource Text.Muted}"/>
+          </DockPanel>
+          <DataGrid x:Name="CopyGrid" Height="200">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="96" MinWidth="90">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <CheckBox Style="{StaticResource CellCheck}" IsChecked="{Binding [Copy], UpdateSourceTrigger=PropertyChanged}"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Header="Subpasta" Binding="{Binding [Name]}" IsReadOnly="True" Width="200" ElementStyle="{StaticResource CellMono}"/>
+              <DataGridTextColumn Header="Caminho de destino" Binding="{Binding [Path]}" IsReadOnly="True" Width="380" ElementStyle="{StaticResource CellMono}"/>
+              <DataGridTemplateColumn Header=".config no destino" Width="150" MinWidth="110" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [ConfigInfoKind]}"><TextBlock Text="{Binding [ConfigInfo]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="Resultado" Width="Auto" MinWidth="160" IsReadOnly="True">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Border Style="{StaticResource Chip}" Tag="{Binding [CopyStatusKind]}"><TextBlock Text="{Binding [CopyStatus]}"/></Border>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+          <DockPanel Margin="0,12,0,0">
+            <Button x:Name="CopyButton" DockPanel.Dock="Right" Content="Copiar e substituir nos selecionados" Style="{StaticResource Btn.Primary}" IsEnabled="False" Margin="12,0,0,0"/>
+            <StackPanel VerticalAlignment="Center">
+              <TextBlock x:Name="CopyStatusText" Text="Selecione as subpastas de destino." Style="{StaticResource Text.Muted}" Margin="0,0,0,6"/>
+              <ProgressBar x:Name="CopyProgress" Minimum="0" Maximum="100" Value="0"/>
+            </StackPanel>
+          </DockPanel>
+        </StackPanel>
+      </Border>
+
       <!-- 1. Descoberta -->
       <Border Style="{StaticResource Card}">
         <StackPanel>

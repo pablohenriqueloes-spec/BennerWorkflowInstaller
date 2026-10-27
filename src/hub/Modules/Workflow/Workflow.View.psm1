@@ -12,9 +12,10 @@ $script:Settings = Get-WorkflowSettings
 $script:UI = @{}
 $script:FoundRows = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:InstalledRows = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
+$script:CopyRows = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:HeaderChecks = New-Object System.Collections.ArrayList
 $script:BulkUpdate = $false
-$script:Flags = @{ Installing = $false; Unlocking = $false; EditingConfig = $false; Removing = $false; ChangingLogin = $false }
+$script:Flags = @{ Installing = $false; Unlocking = $false; EditingConfig = $false; Removing = $false; ChangingLogin = $false; Copying = $false }
 
 $script:FoundSearchKeys = @('First', 'Second', 'ServiceName', 'SuperServerHost', 'SystemName', 'WorkflowUser', 'NotifySenderUser', 'ConfigText', 'Status', 'UnlockStatus')
 $script:InstalledSearchKeys = @('Name', 'Display', 'State', 'StartName', 'Folder', 'Result', 'ErrorSummary')
@@ -24,6 +25,7 @@ $script:ErrorWindows = @{}
 # Fila de instalacao e de desbloqueio (acompanhadas por timer na thread da interface).
 $script:Queue = @(); $script:QueuePosition = 0; $script:CurrentProcess = $null; $script:CurrentTask = $null; $script:SessionLog = $null
 $script:UnlockQueue = @(); $script:UnlockPosition = 0; $script:UnlockProcess = $null; $script:CurrentUnlockJob = $null; $script:UnlockLog = $null
+$script:CopyQueue = @(); $script:CopyPosition = 0; $script:CopyProcess = $null; $script:CurrentCopyJob = $null; $script:CopyLog = $null; $script:CopyRobocopyLog = $null; $script:CopySource = ''
 
 function Test-WorkflowViewBusy {
     foreach ($v in $script:Flags.Values) { if ($v) { return $true } }
@@ -121,7 +123,11 @@ function Update-Commands {
     $unlockCount = (Get-CheckedRows $script:FoundRows 'Unlock').Count
     $loginCount = (Get-CheckedRows $script:InstalledRows 'LoginSel').Count
     $removeCount = (Get-CheckedRows $script:InstalledRows 'Remove').Count
-    foreach ($n in 'RootBox', 'BrowseButton', 'ScanButton', 'IncludeFirstCheck', 'MarkAllButton', 'UnmarkAllButton', 'RefreshButton') { $script:UI[$n].IsEnabled = -not $busy }
+    $copyCount = (Get-CheckedRows $script:CopyRows 'Copy').Count
+    foreach ($n in 'RootBox', 'BrowseButton', 'ScanButton', 'IncludeFirstCheck', 'MarkAllButton', 'UnmarkAllButton', 'RefreshButton',
+        'CopySourceBox', 'CopySourceBrowse', 'CopyTargetBox', 'CopyTargetBrowse', 'CopyListButton', 'NewTargetBox', 'AddTargetButton') { $script:UI[$n].IsEnabled = -not $busy }
+    $script:UI.CopyGrid.IsReadOnly = $f.Copying
+    $script:UI.CopyButton.IsEnabled = ($copyCount -gt 0 -and -not $busy)
     $script:UI.FoundGrid.IsReadOnly = ($f.Installing -or $f.Unlocking -or $f.EditingConfig)
     $script:UI.InstalledGrid.IsReadOnly = ($f.Removing -or $f.ChangingLogin)
     $canInstall = ($installCount -gt 0 -and -not $busy)
@@ -243,6 +249,190 @@ function Invoke-Scan {
     if (@($warnings).Count -gt 0) {
         Show-HubMessage -Text ("Algumas pastas não puderam ser consultadas:`r`n" + (@($warnings | ForEach-Object { $_.Message }) -join "`r`n")) -Title 'Busca parcial' -Kind Warning | Out-Null
     }
+}
+
+# ---------------------------------------------------------------------------
+# Criar/Atualizar pasta (copiar e substituir da origem para subpastas do destino)
+# ---------------------------------------------------------------------------
+function Get-CopyConfigBadge([int]$Count, [bool]$Exists) {
+    if (-not $Exists) { return @('Pasta nova', 'run') }
+    if ($Count -gt 0) { return @("$Count .config", 'warn') }
+    return @('Sem .config', '')
+}
+
+function Update-CopySelection {
+    $checked = (Get-CheckedRows $script:CopyRows 'Copy').Count
+    $script:UI.CopyTargetsText.Text = "$($script:CopyRows.Count) subpasta(s), $checked selecionada(s)"
+    Update-Commands
+}
+
+function New-CopyRow([string]$Name, [string]$Path, [int]$ConfigCount, [bool]$Exists, [bool]$Checked) {
+    $row = New-Object BennerHub.HubRow
+    $row['Copy'] = $Checked
+    $row['Name'] = $Name; $row['Path'] = $Path
+    $badge = Get-CopyConfigBadge $ConfigCount $Exists
+    Set-RowState $row 'ConfigInfo' $badge[0] $badge[1]
+    Set-RowState $row 'CopyStatus' 'Não executado'
+    $row['Visible'] = $true
+    $row.add_ValueChanged({ param($s, $e) if (-not $script:BulkUpdate -and $e.Key -eq 'Copy') { Invoke-HubSafe { Update-CopySelection } } })
+    return $row
+}
+
+function Invoke-ListCopyTargets {
+    if (Test-WorkflowViewBusy) { return }
+    $root = $script:UI.CopyTargetBox.Text.Trim().TrimEnd('\')
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+        Show-HubMessage -Text "Pasta de destino não encontrada: $root" -Title 'Destino inválido' -Kind Warning | Out-Null
+        return
+    }
+    $script:CopyRows.Clear()
+    foreach ($item in @(Get-WorkflowCopyTarget -Root $root)) {
+        $script:CopyRows.Add((New-CopyRow $item.Name $item.Path $item.ConfigCount $true $false))
+    }
+    $script:UI.CopyProgress.Value = 0
+    $script:UI.CopyStatusText.Text = 'Selecione as subpastas de destino.'
+    Update-CopySelection
+}
+
+function Invoke-AddCopyTarget {
+    if (Test-WorkflowViewBusy) { return }
+    $name = $script:UI.NewTargetBox.Text.Trim()
+    $root = $script:UI.CopyTargetBox.Text.Trim().TrimEnd('\')
+    if (-not $name) { return }
+    if ($name -match '[\\/:*?"<>|]' -or $name -eq '.' -or $name -eq '..') {
+        Show-HubMessage -Text "Nome de subpasta inválido: '$name'. Informe só o nome, sem \ / : * ? `" < > |" -Title 'Nome inválido' -Kind Warning | Out-Null; return
+    }
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+        Show-HubMessage -Text "Pasta de destino não encontrada: $root" -Title 'Destino inválido' -Kind Warning | Out-Null; return
+    }
+    $path = Join-Path $root $name
+    $existing = @($script:CopyRows | Where-Object { [string]$_['Path'] -ieq $path })
+    if ($existing.Count -gt 0) { $existing[0]['Copy'] = $true; $script:UI.NewTargetBox.Clear(); return }
+    $exists = Test-Path -LiteralPath $path -PathType Container
+    $count = $(if ($exists) { @(Get-ChildItem -LiteralPath $path -File -Filter '*.config' -Force -ErrorAction SilentlyContinue).Count } else { 0 })
+    $script:CopyRows.Add((New-CopyRow $name $path $count $exists $true))
+    $script:UI.NewTargetBox.Clear()
+    Update-CopySelection
+}
+
+function Format-CopyList([string[]]$Items, [int]$Max = 6) {
+    $items = @($Items)
+    $text = (@($items | Select-Object -First $Max | ForEach-Object { "      $_" }) -join "`r`n")
+    if ($items.Count -gt $Max) { $text += "`r`n      ... e mais $($items.Count - $Max)" }
+    return $text
+}
+
+function Invoke-CopyFolders {
+    if (Test-WorkflowViewBusy) { return }
+    Commit-Grid $script:UI.CopyGrid
+    $source = $script:UI.CopySourceBox.Text.Trim().TrimEnd('\')
+    $rows = Get-CheckedRows $script:CopyRows 'Copy'
+    if ($rows.Count -eq 0) { return }
+    $problems = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($row in $rows) { foreach ($p in (Test-WorkflowCopyPaths -Source $source -Destination ([string]$row['Path']))) { if (-not $problems.Contains($p)) { $problems.Add($p) } } }
+    if ($problems.Count -gt 0) { Show-HubMessage -Text ($problems -join "`r`n") -Title 'Corrija antes de copiar' -Kind Warning | Out-Null; return }
+
+    $sourceConfigs = Get-WorkflowSourceConfigFiles -Source $source
+    $jobs = New-Object 'System.Collections.Generic.List[object]'
+    $running = New-Object 'System.Collections.Generic.List[string]'
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    $replacedTotal = 0
+    $services = @(Get-WorkflowInstalledService)
+    foreach ($row in $rows) {
+        $plan = Get-WorkflowCopyPlan -Source $source -Destination ([string]$row['Path']) -SourceConfigs $sourceConfigs
+        $jobs.Add([pscustomobject]@{ Row = $row; Plan = $plan; KeepConfigs = $false })
+        $replacedTotal += $plan.Replaced.Count
+        $line = '  ' + $plan.Destination + $(if (-not $plan.Exists) { '  (pasta nova)' } else { '' })
+        if ($plan.Replaced.Count -gt 0) { $line += "`r`n    .config que serão SUBSTITUÍDOS ($($plan.Replaced.Count)):`r`n" + (Format-CopyList $plan.Replaced) }
+        if ($plan.New.Count -gt 0) { $line += "`r`n    .config novos ($($plan.New.Count)):`r`n" + (Format-CopyList $plan.New) }
+        $lines.Add($line)
+        if ($plan.Exists) {
+            foreach ($svc in @(Get-WorkflowServicesInFolder -Folder $plan.Destination -Services $services | Where-Object { $_.State -eq 'Running' })) { $running.Add("  $($svc.Name)  ($($svc.Folder))") }
+        }
+    }
+    $bulk = $(if ($jobs.Count -gt 2) { "ATENÇÃO: $($jobs.Count) destinos serão afetados por esta ação.`r`n`r`n" } else { '' })
+    $msg = $bulk + "Copiar e substituir o conteúdo de:`r`n  $source`r`n`r`npara $($jobs.Count) destino(s):`r`n" + ($lines -join "`r`n") + "`r`n`r`nArquivos com o mesmo nome no destino serão sobrescritos. Nada é apagado do destino."
+    if ($running.Count -gt 0) { $msg += "`r`n`r`nATENÇÃO: há serviços em execução nestas pastas. Arquivos em uso não serão substituídos e a cópia pode falhar para esses destinos:`r`n" + ($running -join "`r`n") }
+    if ($replacedTotal -gt 0) {
+        $msg += "`r`n`r`nATENÇÃO: a cópia vai substituir $replacedTotal arquivo(s) .config existente(s), o que troca as configurações atuais dos serviços pelas da origem.`r`n`r`nSim: copiar e substituir também os .config (cada um recebe backup antes).`r`nNão: copiar tudo, mas manter os .config atuais.`r`nCancelar: não copiar."
+        $answer = Show-HubMessage -Text $msg -Title 'Confirmar cópia: .config será afetado' -Kind Warning -YesNoCancel -DefaultNo
+        if ($answer -eq 'Cancel') { return }
+        $keep = ($answer -eq 'No')
+        foreach ($job in $jobs) { $job.KeepConfigs = $keep }
+    } else {
+        if ((Show-HubMessage -Text ($msg + "`r`n`r`nDeseja continuar?") -Title 'Confirmar cópia' -Kind Question -YesNo) -ne 'Yes') { return }
+    }
+
+    $script:CopyLog = New-HubLogFile -Directory $script:Settings.LogDirectory -Prefix 'Workflow_Copia'
+    $script:CopyRobocopyLog = [IO.Path]::ChangeExtension($script:CopyLog, $null).TrimEnd('.') + '_robocopy.log'
+    Write-HubLog -Path $script:CopyLog -Message ("INICIO COPIA | origem={0} | destinos={1} | .config={2}" -f $source, $jobs.Count, $(if ($replacedTotal -eq 0) { 'nenhum afetado' } elseif ($jobs[0].KeepConfigs) { 'mantidos' } else { 'substituidos com backup' }))
+    foreach ($job in $jobs) { Set-RowState $job.Row 'CopyStatus' 'Na fila' }
+    $script:CopySource = $source
+    $script:CopyQueue = $jobs.ToArray(); $script:CopyPosition = 0; $script:CopyProcess = $null
+    $script:UI.CopyProgress.Value = 0
+    $script:Flags.Copying = $true; Update-Commands
+    Start-NextCopy
+    if ($script:Flags.Copying) { $script:CopyTimer.Start() }
+}
+
+function Start-NextCopy {
+    while ($script:CopyPosition -lt $script:CopyQueue.Count) {
+        $job = $script:CopyQueue[$script:CopyPosition]
+        $script:CurrentCopyJob = $job
+        $n = $script:CopyPosition + 1
+        $script:UI.CopyStatusText.Text = "Copiando $n/$($script:CopyQueue.Count): $($job.Plan.Destination)"
+        $script:UI.CopyProgress.Value = [int](($script:CopyPosition * 100) / $script:CopyQueue.Count)
+        try {
+            if (-not $job.KeepConfigs -and $job.Plan.Replaced.Count -gt 0) {
+                Set-RowState $job.Row 'CopyStatus' 'Backup dos .config...' 'run'
+                [void](Backup-WorkflowConfigFiles -Destination $job.Plan.Destination -RelativePaths $job.Plan.Replaced -LogFile $script:CopyLog)
+            }
+            Set-RowState $job.Row 'CopyStatus' 'Copiando...' 'run'
+            $exclude = $(if ($job.KeepConfigs) { $job.Plan.Replaced } else { @() })
+            $script:CopyProcess = Start-WorkflowFolderCopy -Source $script:CopySource -Destination $job.Plan.Destination -RobocopyLog $script:CopyRobocopyLog -ExcludeConfigs $exclude
+            return
+        } catch {
+            Set-RowState $job.Row 'CopyStatus' 'Falha ao iniciar' 'err'
+            Write-HubLog -Path $script:CopyLog -Message ("FALHA INICIANDO {0}: {1}" -f $job.Plan.Destination, $_.Exception.Message)
+            $script:CopyPosition++
+        }
+    }
+    Finish-Copy
+}
+
+function On-CopyTick {
+    if ($null -eq $script:CopyProcess -or -not $script:CopyProcess.HasExited) { return }
+    $code = $script:CopyProcess.ExitCode
+    $job = $script:CurrentCopyJob
+    $replaced = $job.Plan.Replaced.Count
+    if ($code -ge 8) { Set-RowState $job.Row 'CopyStatus' "Falha (código $code)" 'err' }
+    elseif ($replaced -gt 0 -and $job.KeepConfigs) { Set-RowState $job.Row 'CopyStatus' 'Concluído (.config mantido)' 'warn' }
+    elseif ($replaced -gt 0) { Set-RowState $job.Row 'CopyStatus' 'Concluído (.config substituído, backup)' 'warn' }
+    else { Set-RowState $job.Row 'CopyStatus' 'Concluído' 'ok' }
+    # So nomes e contagens: o conteudo dos .config nunca vai para o log.
+    Write-HubLog -Path $script:CopyLog -Message ("COPIA | {0} | robocopy={1} | .config substituidos={2} | mantidos={3} | novos={4}" -f $job.Plan.Destination, $code, $(if ($job.KeepConfigs) { 0 } else { $replaced }), $(if ($job.KeepConfigs) { $replaced } else { 0 }), $job.Plan.New.Count)
+    $script:CopyProcess.Dispose(); $script:CopyProcess = $null
+    $script:CopyPosition++
+    Start-NextCopy
+}
+
+function Finish-Copy {
+    $script:CopyTimer.Stop()
+    $script:Flags.Copying = $false
+    $ok = @($script:CopyQueue | Where-Object { [string]$_.Row['CopyStatus'] -like 'Concluído*' }).Count
+    $failed = $script:CopyQueue.Count - $ok
+    foreach ($job in $script:CopyQueue) {
+        $path = $job.Plan.Destination
+        $exists = Test-Path -LiteralPath $path -PathType Container
+        $count = $(if ($exists) { @(Get-ChildItem -LiteralPath $path -File -Filter '*.config' -Force -ErrorAction SilentlyContinue).Count } else { 0 })
+        $badge = Get-CopyConfigBadge $count $exists
+        Set-RowState $job.Row 'ConfigInfo' $badge[0] $badge[1]
+    }
+    $script:UI.CopyProgress.Value = 100
+    $script:UI.CopyStatusText.Text = "Cópia concluída: $ok sucesso(s), $failed falha(s)."
+    Write-HubLog -Path $script:CopyLog -Message "FIM COPIA | sucesso=$ok | falha=$failed"
+    Update-CopySelection
+    Show-HubMessage -Text "Cópia finalizada.`r`n`r`nSucesso: $ok`r`nFalha: $failed`r`n`r`nLog: $($script:CopyLog)`r`nDetalhe do robocopy: $($script:CopyRobocopyLog)" -Title 'Resultado da cópia' -Kind $(if ($failed -gt 0) { 'Warning' } else { 'Info' }) | Out-Null
 }
 
 # ---------------------------------------------------------------------------
@@ -711,14 +901,33 @@ function New-WorkflowView {
     $visibleOnly = [Predicate[object]] { param($r) return ($r['Visible'] -eq $true) }
     [System.Windows.Data.CollectionViewSource]::GetDefaultView($script:FoundRows).Filter = $visibleOnly
     [System.Windows.Data.CollectionViewSource]::GetDefaultView($script:InstalledRows).Filter = $visibleOnly
+    $ui.CopySourceBox.Text = $script:Settings.CopySource
+    $ui.CopyTargetBox.Text = $script:Settings.CopyTarget
+    $ui.CopyGrid.ItemsSource = $script:CopyRows
 
     Add-HeaderCheck $ui.FoundGrid 0 'Install' 'Instalar' $script:FoundRows { Update-Selection }
     Add-HeaderCheck $ui.FoundGrid 1 'Unlock' 'Desbloquear' $script:FoundRows { Update-Selection }
     Add-HeaderCheck $ui.InstalledGrid 0 'LoginSel' 'Login' $script:InstalledRows { Update-InstalledSelection }
     Add-HeaderCheck $ui.InstalledGrid 1 'Remove' 'Remover' $script:InstalledRows { Update-InstalledSelection }
+    Add-HeaderCheck $ui.CopyGrid 0 'Copy' 'Copiar' $script:CopyRows { Update-CopySelection }
 
     $script:InstallTimer = New-HubTimer -IntervalMs 350 -OnTick { Invoke-HubSafe { On-InstallTick } }
     $script:UnlockTimer = New-HubTimer -IntervalMs 350 -OnTick { Invoke-HubSafe { On-UnlockTick } }
+    $script:CopyTimer = New-HubTimer -IntervalMs 350 -OnTick { Invoke-HubSafe { On-CopyTick } }
+
+    $ui.CopySourceBrowse.Add_Click({ Invoke-HubSafe {
+                $path = Select-HubFolder -Description 'Selecione a pasta de origem (de onde copiar)' -InitialPath $script:UI.CopySourceBox.Text
+                if ($path) { $script:UI.CopySourceBox.Text = $path }
+            } })
+    $ui.CopyTargetBrowse.Add_Click({ Invoke-HubSafe {
+                $path = Select-HubFolder -Description 'Selecione a pasta de destino (as subpastas serao listadas)' -InitialPath $script:UI.CopyTargetBox.Text
+                if ($path) { $script:UI.CopyTargetBox.Text = $path; Invoke-ListCopyTargets }
+            } })
+    $ui.CopyListButton.Add_Click({ Invoke-HubSafe { Invoke-ListCopyTargets } })
+    $ui.CopyTargetBox.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { Invoke-HubSafe { Invoke-ListCopyTargets } } })
+    $ui.AddTargetButton.Add_Click({ Invoke-HubSafe { Invoke-AddCopyTarget } })
+    $ui.NewTargetBox.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { Invoke-HubSafe { Invoke-AddCopyTarget } } })
+    $ui.CopyButton.Add_Click({ Invoke-HubSafe { Invoke-CopyFolders } -Title 'Falha na copia' })
 
     $ui.BrowseButton.Add_Click({ Invoke-HubSafe {
                 $path = Select-HubFolder -Description 'Selecione o diretório base de Workflow (WFL)' -InitialPath $script:UI.RootBox.Text
@@ -766,6 +975,7 @@ function New-WorkflowView {
             }
         })
 
+    if (Test-Path -LiteralPath $ui.CopyTargetBox.Text -PathType Container) { Invoke-HubSafe { Invoke-ListCopyTargets } -Title 'Falha ao listar subpastas' }
     Refresh-Installed
     if (Test-Path -LiteralPath $ui.RootBox.Text -PathType Container) { Invoke-Scan } else { Update-Selection }
     return $view

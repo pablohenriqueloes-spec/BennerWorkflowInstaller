@@ -312,15 +312,17 @@ function Get-HubNamedElements {
 }
 
 function Show-HubMessage {
-    <# MessageBox com dono na janela do HUB. Kind: Info, Warning, Error, Question. Devolve 'Yes'/'No'/'OK'. #>
+    <# MessageBox com dono na janela do HUB. Kind: Info, Warning, Error, Question. Devolve 'Yes'/'No'/'Cancel'/'OK'. #>
     param(
         [Parameter(Mandatory)][string]$Text,
         [string]$Title = 'Benner HUB',
         [ValidateSet('Info', 'Warning', 'Error', 'Question')][string]$Kind = 'Info',
         [switch]$YesNo,
+        [switch]$YesNoCancel,
         [switch]$DefaultNo
     )
-    $buttons = $(if ($YesNo) { [System.Windows.MessageBoxButton]::YesNo } else { [System.Windows.MessageBoxButton]::OK })
+    if ($YesNoCancel) { $YesNo = $true }
+    $buttons = $(if ($YesNoCancel) { [System.Windows.MessageBoxButton]::YesNoCancel } elseif ($YesNo) { [System.Windows.MessageBoxButton]::YesNo } else { [System.Windows.MessageBoxButton]::OK })
     $image = switch ($Kind) {
         'Warning' { [System.Windows.MessageBoxImage]::Warning }
         'Error' { [System.Windows.MessageBoxImage]::Error }

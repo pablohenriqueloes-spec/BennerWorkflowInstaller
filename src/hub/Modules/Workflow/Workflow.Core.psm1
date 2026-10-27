@@ -23,6 +23,8 @@ $script:Settings = [pscustomobject]@{
     InstallUtil  = (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\InstallUtil.exe')
     LogDirectory = (Join-Path $env:ProgramData 'Benner\WorkflowInstaller\Logs')
     DefaultRoot  = 'E:\Benner\WFL'
+    CopySource   = 'E:\Benner\WorkflowService'
+    CopyTarget   = 'E:\Benner\Ferramentas\WFL'
     DefaultUser  = 'SYSDBA'
     ServiceMatch = '*Workflow Service*'
 }
@@ -30,6 +32,145 @@ $script:Settings = [pscustomobject]@{
 function Get-WorkflowSettings {
     <# Constantes do modulo (nome do executavel, InstallUtil, pasta de logs, padroes). #>
     return $script:Settings
+}
+
+# ---------------------------------------------------------------------------
+# Etapa 0: criar/atualizar pastas a partir de uma origem (copiar e substituir)
+# A copia usa o robocopy do Windows (/E /IS /IT: tudo, inclusive arquivos iguais,
+# sobrescrevendo; /XJ: nao segue junctions). Antes, cada .config que sera
+# substituido recebe backup <arquivo>.backup_<data>.
+# ---------------------------------------------------------------------------
+function Get-WorkflowCopyTarget {
+    <# Subpastas diretas da raiz de destino (sem junctions/links), com a quantidade de .config no primeiro nivel. #>
+    param([Parameter(Mandatory)][string]$Root)
+    $base = $Root.Trim().TrimEnd('\')
+    if (-not (Test-Path -LiteralPath $base -PathType Container)) { throw "Pasta de destino nao encontrada: $base" }
+    foreach ($dir in @(Get-ChildItem -LiteralPath $base -Directory -Force -ErrorAction Stop | Sort-Object Name)) {
+        if (($dir.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        $configs = @(Get-ChildItem -LiteralPath $dir.FullName -File -Filter '*.config' -Force -ErrorAction SilentlyContinue)
+        [pscustomobject]@{ Name = $dir.Name; Path = $dir.FullName; ConfigCount = $configs.Count }
+    }
+}
+
+function Test-WorkflowCopyPaths {
+    <# Problemas que impedem copiar de -Source para -Destination (vazio = pode copiar). #>
+    param([string]$Source, [string]$Destination)
+    $problems = New-Object 'System.Collections.Generic.List[string]'
+    if ([string]::IsNullOrWhiteSpace($Source) -or -not (Test-Path -LiteralPath $Source -PathType Container)) { $problems.Add("Pasta de origem nao encontrada: $Source"); return , $problems.ToArray() }
+    if ([string]::IsNullOrWhiteSpace($Destination)) { $problems.Add('Destino vazio.'); return , $problems.ToArray() }
+    try {
+        $src = [IO.Path]::GetFullPath($Source).TrimEnd('\')
+        $dst = [IO.Path]::GetFullPath($Destination).TrimEnd('\')
+    } catch { $problems.Add("Caminho invalido: $Destination"); return , $problems.ToArray() }
+    if ($dst -ieq $src) { $problems.Add("Destino igual a origem: $dst") }
+    elseif ($dst.StartsWith($src + '\', [StringComparison]::OrdinalIgnoreCase)) { $problems.Add("Destino dentro da origem: $dst") }
+    elseif ($src.StartsWith($dst + '\', [StringComparison]::OrdinalIgnoreCase)) { $problems.Add("Origem dentro do destino: $dst") }
+    if ($dst.Length -le 3) { $problems.Add("Destino nao pode ser a raiz de um disco: $dst") }
+    if ($src.Length -le 3) { $problems.Add("Origem nao pode ser a raiz de um disco: $src") }
+    return , $problems.ToArray()
+}
+
+function Get-WorkflowSourceConfigFiles {
+    <# Caminhos relativos (a partir da origem) de todos os *.config da origem. #>
+    param([Parameter(Mandatory)][string]$Source)
+    $src = [IO.Path]::GetFullPath($Source).TrimEnd('\')
+    $list = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($f in @(Get-ChildItem -LiteralPath $src -Recurse -File -Filter '*.config' -Force -ErrorAction SilentlyContinue)) {
+        if ($f.Name -notlike '*.config') { continue }
+        $list.Add($f.FullName.Substring($src.Length + 1))
+    }
+    return , $list.ToArray()
+}
+
+function Get-WorkflowCopyPlan {
+    <#
+    O que a copia vai fazer com os .config de um destino:
+    Replaced = .config que ja existem no destino e serao substituidos; New = .config que serao criados.
+    Passe -SourceConfigs (de Get-WorkflowSourceConfigFiles) para nao varrer a origem a cada destino.
+    #>
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination, [string[]]$SourceConfigs)
+    if ($null -eq $SourceConfigs) { $SourceConfigs = Get-WorkflowSourceConfigFiles -Source $Source }
+    $dst = [IO.Path]::GetFullPath($Destination).TrimEnd('\')
+    $exists = Test-Path -LiteralPath $dst -PathType Container
+    $replaced = New-Object 'System.Collections.Generic.List[string]'
+    $new = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($rel in $SourceConfigs) {
+        if ($exists -and (Test-Path -LiteralPath (Join-Path $dst $rel) -PathType Leaf)) { $replaced.Add($rel) } else { $new.Add($rel) }
+    }
+    return [pscustomobject]@{ Destination = $dst; Exists = $exists; Replaced = $replaced.ToArray(); New = $new.ToArray() }
+}
+
+function Backup-WorkflowConfigFiles {
+    <# Copia cada .config (relativo ao destino) para <arquivo>.backup_<data>. Devolve a quantidade. #>
+    param([Parameter(Mandatory)][string]$Destination, [string[]]$RelativePaths, [string]$LogFile)
+    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss_fff'
+    $n = 0
+    foreach ($rel in @($RelativePaths)) {
+        $file = Join-Path $Destination $rel
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+        Copy-Item -LiteralPath $file -Destination ($file + '.backup_' + $stamp) -Force -ErrorAction Stop
+        Write-HubLog -Path $LogFile -Message "BACKUP .config | $file -> $file.backup_$stamp"
+        $n++
+    }
+    return $n
+}
+
+function Start-WorkflowFolderCopy {
+    <#
+    Cria o destino se preciso e inicia o robocopy (copiar e substituir) em processo oculto.
+    -ExcludeConfigs: caminhos relativos de .config que NAO devem ser copiados (mantem os atuais).
+    Devolve o Process. Codigo de saida do robocopy: 0 a 7 = sucesso, 8 ou mais = falha.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination,
+        [Parameter(Mandatory)][string]$RobocopyLog,
+        [string[]]$ExcludeConfigs = @()
+    )
+    $problems = Test-WorkflowCopyPaths -Source $Source -Destination $Destination
+    if ($problems.Count -gt 0) { throw ($problems -join [Environment]::NewLine) }
+    $src = [IO.Path]::GetFullPath($Source).TrimEnd('\')
+    $dst = [IO.Path]::GetFullPath($Destination).TrimEnd('\')
+    New-Item -ItemType Directory -Path $dst -Force -ErrorAction Stop | Out-Null
+    $robocopy = Join-Path $env:WINDIR 'System32\robocopy.exe'
+    $arguments = '"{0}" "{1}" /E /IS /IT /XJ /R:2 /W:2 /NP /NDL /UNILOG+:"{2}"' -f $src, $dst, $RobocopyLog
+    $exclude = @($ExcludeConfigs | Where-Object { $_ } | ForEach-Object { '"{0}"' -f (Join-Path $src $_) })
+    if ($exclude.Count -gt 0) { $arguments += ' /XF ' + ($exclude -join ' ') }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $robocopy
+    $psi.Arguments = $arguments
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $p = New-Object System.Diagnostics.Process
+    $p.StartInfo = $psi
+    [void]$p.Start()
+    return $p
+}
+
+function Get-WorkflowServicesInFolder {
+    <# Workflow Services cujo executavel esta dentro de -Folder (para avisar sobre arquivos em uso). #>
+    <# -Services: lista ja obtida com Get-WorkflowInstalledService (evita consultar o Windows a cada pasta). #>
+    param([Parameter(Mandatory)][string]$Folder, [object[]]$Services)
+    if ($null -eq $Services) { $Services = @(Get-WorkflowInstalledService) }
+    $dst = [IO.Path]::GetFullPath($Folder).TrimEnd('\')
+    return @($Services | Where-Object {
+            $_.Folder -and ($_.Folder.TrimEnd('\') -ieq $dst -or $_.Folder.StartsWith($dst + '\', [StringComparison]::OrdinalIgnoreCase))
+        })
+}
+
+function Copy-WorkflowFolder {
+    <#
+    Versao sincrona para scripts: copia e substitui -Source em -Destination.
+    Por padrao substitui tambem os .config (com backup); -KeepConfigs mantem os atuais.
+    #>
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination, [Parameter(Mandatory)][string]$LogFile, [switch]$KeepConfigs)
+    $plan = Get-WorkflowCopyPlan -Source $Source -Destination $Destination
+    if (-not $KeepConfigs) { [void](Backup-WorkflowConfigFiles -Destination $plan.Destination -RelativePaths $plan.Replaced -LogFile $LogFile) }
+    $robolog = [IO.Path]::ChangeExtension($LogFile, $null).TrimEnd('.') + '_robocopy.log'
+    $p = Start-WorkflowFolderCopy -Source $Source -Destination $Destination -RobocopyLog $robolog -ExcludeConfigs $(if ($KeepConfigs) { $plan.Replaced } else { @() })
+    try { $p.WaitForExit(); $code = $p.ExitCode } finally { $p.Dispose() }
+    Write-HubLog -Path $LogFile -Message ("COPIA | {0} -> {1} | robocopy={2} | .config substituidos={3} | mantidos={4}" -f $Source, $plan.Destination, $code, $(if ($KeepConfigs) { 0 } else { $plan.Replaced.Count }), $(if ($KeepConfigs) { $plan.Replaced.Count } else { 0 }))
+    return [pscustomobject]@{ Destination = $plan.Destination; ExitCode = $code; Success = ($code -lt 8); Plan = $plan }
 }
 
 # ---------------------------------------------------------------------------

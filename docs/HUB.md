@@ -42,6 +42,10 @@ Import-Module 'C:\BennerHub\Modules\Workflow\Workflow.Core.psm1'
 $cfg = Get-WorkflowSettings
 $log = New-HubLogFile -Directory $cfg.LogDirectory -Prefix 'Workflow_Script'
 
+# 0. Criar/atualizar pasta (copiar e substituir; .config recebe backup, ou -KeepConfigs para manter os atuais)
+Get-WorkflowCopyPlan -Source 'E:\Benner\WorkflowService' -Destination 'E:\Benner\Ferramentas\WFL\CLIENTE'   # Replaced = .config que seriam substituidos
+Copy-WorkflowFolder -Source 'E:\Benner\WorkflowService' -Destination 'E:\Benner\Ferramentas\WFL\CLIENTE' -LogFile $log
+
 # 1. Descoberta
 $pastas = Find-WorkflowFolder -Root 'E:\Benner\WFL' -IncludeFirst $true
 
@@ -68,7 +72,7 @@ Set-WorkflowServiceLogon -Name $instalados[0].Name -Account 'DOMINIO\svc_wfl' -P
 Test-WorkflowServiceStart -Name $instalados[0].Name -LogFile $log
 ```
 
-Funções de apoio: `Get-WorkflowServiceName`, `Test-WorkflowServiceName`, `Get-WorkflowConfigState`, `Test-WorkflowConfigValues`, `Get-WorkflowInstallCommand`, `Get-WorkflowExistingServiceNames`, `Start-WorkflowInstall` e `Start-WorkflowUnblock` (versões assíncronas que devolvem o processo), `Write-WorkflowInstallResult`, `Find-WorkflowConfigurator`, `Test-WorkflowRemovalFolder`, `Test-WorkflowLogonInput`, `Get-WorkflowLastError` (últimos erros do arquivo `errors`), `Get-WorkflowErrorFile`, `ConvertFrom-WorkflowErrorLog`.
+Funções de apoio: `Get-WorkflowCopyTarget`, `Test-WorkflowCopyPaths`, `Get-WorkflowSourceConfigFiles`, `Backup-WorkflowConfigFiles`, `Start-WorkflowFolderCopy` (robocopy assíncrono), `Get-WorkflowServicesInFolder`, `Get-WorkflowServiceName`, `Test-WorkflowServiceName`, `Get-WorkflowConfigState`, `Test-WorkflowConfigValues`, `Get-WorkflowInstallCommand`, `Get-WorkflowExistingServiceNames`, `Start-WorkflowInstall` e `Start-WorkflowUnblock` (versões assíncronas que devolvem o processo), `Write-WorkflowInstallResult`, `Find-WorkflowConfigurator`, `Test-WorkflowRemovalFolder`, `Test-WorkflowLogonInput`, `Get-WorkflowLastError` (últimos erros do arquivo `errors`), `Get-WorkflowErrorFile`, `ConvertFrom-WorkflowErrorLog`.
 
 O núcleo (`BennerHub.Core.psm1`) oferece o que não é específico do Workflow e pode servir a outros módulos: `New-HubLogFile`, `Write-HubLog`, `Start-HubPowerShellProcess`, `Get-HubServiceExePath`, `Get-HubServiceInfo`, `Set-HubServiceLogon`, `Grant-HubServiceLogonRight`, `Restart-HubService`, `Read-HubFileTail`, `Show-HubMessage`, `Invoke-HubSafe`, `New-HubTimer`, `Select-HubFolder`, `Test-HubRowMatch` e o tipo `BennerHub.HubRow` (linha observável para grades).
 
@@ -99,6 +103,7 @@ O HUB lista o módulo no menu na próxima abertura e só carrega o código quand
 ## Diferenças em relação à versão Windows Forms
 
 - Layout que se adapta à largura da janela e à escala do RDP, sem coordenadas fixas.
+- Cartão novo **Criar/Atualizar pasta**, acima da Descoberta: copia uma origem (padrão `E:\Benner\WorkflowService`) para várias subpastas do destino (padrão `E:\Benner\Ferramentas\WFL`) de uma vez, no modelo copiar e substituir (robocopy `/E /IS /IT /XJ`; nada é apagado do destino). Dá para adicionar uma subpasta nova pelo nome. Antes de copiar, a confirmação lista por destino os `.config` que seriam substituídos e os novos, e avisa sobre serviços em execução nessas pastas. Se algum `.config` existente for afetado, a caixa pergunta: **Sim** substitui também os `.config` (cada um recebe backup `.backup_<data>` antes), **Não** copia o resto e mantém os `.config` atuais, **Cancelar** não copia. O log (`Workflow_Copia_*.log` e `*_robocopy.log`) registra só caminhos e contagens, nunca o conteúdo dos `.config`.
 - Status por linha em etiquetas coloridas (pronto, na fila, instalando, sucesso, falha).
 - Coluna nova **.config** na grade de instalação: mostra se o arquivo existe, se será gerado do modelo ou se está ausente.
 - Coluna nova **Conta de logon** na grade de serviços instalados.
@@ -113,14 +118,15 @@ O HUB lista o módulo no menu na próxima abertura e só carrega o código quand
 Faça num servidor de homologação, com uma cópia de pastas Workflow de teste.
 
 1. **Abertura:** o HUB abre com o menu (Início e Workflow) e já mostra o módulo Workflow. Teste também em RDP com escala de 150%.
-2. **Descoberta:** informe a raiz, clique em Buscar pastas, confira VAR1/VAR2, o nome sugerido e a coluna .config. Desmarque "Incluir VARIAVEL1" e veja os nomes mudarem (os editados à mão não mudam).
-3. **Pesquisa e seleção:** digite um trecho na pesquisa, use `%` como curinga, Esc para limpar. Use o "marcar todos" do cabeçalho com e sem filtro. Marque 3 linhas e confira o alerta.
-4. **Editar .config selecionados:** numa pasta com `.config` (confira o backup) e noutra só com `.config.modelo` (confira que o `.config` foi gerado).
-5. **Instalar selecionados:** 2 linhas; confira as etiquetas, o progresso, o log da sessão e que os serviços aparecem na grade de baixo.
-6. **Desbloquear marcados:** numa pasta copiada da internet; confira a coluna Desbloqueio e o log.
-7. **Alterar login:** conta de teste com senha errada (o teste de partida deve falhar) e depois com a certa. Confira que o campo senha fica vazio e que o log não tem a senha.
-8. **Coluna Erro:** confira o último erro de um serviço com arquivo `errors`; abra a janela, minimize, clique de novo na mesma linha (deve restaurar a mesma janela) e maximize.
-9. **Remover:** um serviço de teste; confira que a pasta só some depois do serviço sair do SCM. Tente remover um serviço fora da raiz WFL (deve bloquear).
-10. **Fechar durante um lote:** deve pedir para aguardar.
+2. **Criar/Atualizar pasta:** com uma origem de teste, liste as subpastas do destino, marque duas (uma com `.config`, outra sem) e adicione uma subpasta nova. Confira a confirmação (lista de `.config` substituídos), responda **Não** e veja que o `.config` ficou igual; repita com **Sim** e confira o backup `.backup_<data>` e a coluna Resultado. Teste também com um serviço em execução na pasta (deve avisar e, se arquivos estiverem em uso, mostrar Falha com o código do robocopy).
+3. **Descoberta:** informe a raiz, clique em Buscar pastas, confira VAR1/VAR2, o nome sugerido e a coluna .config. Desmarque "Incluir VARIAVEL1" e veja os nomes mudarem (os editados à mão não mudam).
+4. **Pesquisa e seleção:** digite um trecho na pesquisa, use `%` como curinga, Esc para limpar. Use o "marcar todos" do cabeçalho com e sem filtro. Marque 3 linhas e confira o alerta.
+5. **Editar .config selecionados:** numa pasta com `.config` (confira o backup) e noutra só com `.config.modelo` (confira que o `.config` foi gerado).
+6. **Instalar selecionados:** 2 linhas; confira as etiquetas, o progresso, o log da sessão e que os serviços aparecem na grade de baixo.
+7. **Desbloquear marcados:** numa pasta copiada da internet; confira a coluna Desbloqueio e o log.
+8. **Alterar login:** conta de teste com senha errada (o teste de partida deve falhar) e depois com a certa. Confira que o campo senha fica vazio e que o log não tem a senha.
+9. **Coluna Erro:** confira o último erro de um serviço com arquivo `errors`; abra a janela, minimize, clique de novo na mesma linha (deve restaurar a mesma janela) e maximize.
+10. **Remover:** um serviço de teste; confira que a pasta só some depois do serviço sair do SCM. Tente remover um serviço fora da raiz WFL (deve bloquear).
+11. **Fechar durante um lote:** deve pedir para aguardar.
 
 Se algo falhar, mande o print e o conteúdo de `C:\ProgramData\Benner\Hub\BennerHub_erro.log` (se existir) e do log da operação em `C:\ProgramData\Benner\WorkflowInstaller\Logs`.
