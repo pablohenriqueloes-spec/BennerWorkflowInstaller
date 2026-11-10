@@ -222,8 +222,15 @@ function Get-VersionOrDefault { if ($null -ne $script:Package) { return $script:
 function Set-DefaultsForVersion([string]$Version) {
     $info = Get-WorkerVersionInfo -Version $Version
     $ui = $script:UI
-    $ui.DefaultFilaBox.Text = $info.DefaultFila
-    $ui.DefaultFilaBox.ToolTip = 'Filas do modelo: ' + ($info.Queues -join ', ')
+    # Opcoes da fila (lista fechada por versao): itens HubRow com [Value] e [Label], usados no padrao e em cada linha.
+    $script:QueueOptions = @($info.Queues | ForEach-Object {
+            $o = New-Object BennerHub.HubRow
+            $o['Value'] = $_
+            $o['Label'] = '{0} ({1})' -f $info.QueueLabels[$_], $_
+            $o
+        })
+    $ui.DefaultFilaBox.ItemsSource = $script:QueueOptions
+    $ui.DefaultFilaBox.SelectedValue = $info.DefaultFila
     if ($Version -eq '23') {
         $ui.DefaultProvidersLabel.Text = 'Nº providers (0 = automático)'
         $ui.DefaultProvidersBox.Text = '0'
@@ -329,7 +336,8 @@ function Get-DefaultDisplayName($Row) {
 function Set-RowVersionDefaults($Row) {
     <# Campos que dependem da versao: valores do painel de padroes; nome de exibicao automatico. #>
     $ui = $script:UI
-    $Row['Fila'] = $ui.DefaultFilaBox.Text.Trim()
+    $Row['QueueOptions'] = $script:QueueOptions
+    $Row['Fila'] = [string]$ui.DefaultFilaBox.SelectedValue
     $Row['Providers'] = $ui.DefaultProvidersBox.Text.Trim()
     $Row['Win32'] = $ui.DefaultWin32Box.Text.Trim()
     $Row['Usuario'] = $ui.DefaultUserBox.Text.Trim()

@@ -26,7 +26,7 @@ Logs: `C:\ProgramData\Benner\WorkerInstaller\Logs`. Senhas nunca vão para o log
 | Servidor | `Servidor` | `SystemSettings.SuperServerHost` e `Host` das filas |
 | Sistema | `Sistema` (padrão: nome da pasta) | `SuperServerSystemName` e `SystemName` das filas |
 | DisplayName | nome de exibição do serviço | nome de exibição do serviço |
-| Fila | `Fila` (padrão `Z_BTLREQUISICOES`) | `ConsumerSettings.Name` (padrão `FILA_PADRAO_AMBOS`) |
+| Fila (lista) | `Fila`: Requisições (`Z_BTLREQUISICOES`, padrão) ou Agendamento (`Z_AGENDAMENTOREQUISICOES`) | `ConsumerSettings.Name`: Requisições (`FILA_PADRAO`), Agendamento (`FILA_PADRAO_AGENDAMENTO`) ou Ambos (`FILA_PADRAO_AMBOS`, padrão) |
 | Providers | `NumeroDeProviders` (0 = automático) | providers Core (`CoreSettings` pool) |
 | Win32 | (oculta) | providers Win32 (`LegacySettings` pool) |
 | Usuário | `Usuario` (padrão `SYSDBA`) | `UserContext.UserHandle` (número, opcional) |
@@ -55,7 +55,7 @@ Faça num servidor de homologação, com uma raiz de teste (ex.: `E:\Teste\Worke
 
 1. **Abertura:** o menu mostra Workflow e Worker. Abra o Worker.
 2. **Pacotes:** aponte para a pasta com `worker23` e `worker25`, clique em Detectar e confira as duas opções. Troque entre elas: as colunas Win32, Pool dinâmica, COMFree e o rótulo de Usuário/UserHandle devem mudar.
-3. **Grade:** clique em Listar pastas, abra uma subpasta, adicione `TESTE23` e `TESTE25`. Confira Sistema = nome da pasta, Usuário = SYSDBA (23) e o DisplayName sugerido. Edite os campos por linha.
+3. **Grade:** clique em Listar pastas, abra uma subpasta, adicione `TESTE23` e `TESTE25`. Confira Sistema = nome da pasta, Usuário = SYSDBA (23) e o DisplayName sugerido. Edite os campos por linha e escolha a Fila na lista (23: Requisições ou Agendamento; 25: também Ambos).
 4. **Validação:** deixe Servidor vazio numa linha, repita um DisplayName de um serviço existente, marque uma pasta e uma subpasta dela: cada caso deve bloquear com mensagem.
 5. **Instalar 23:** confira a prévia, instale, veja as etapas (cópia, config, registro, início), o `.config` gerado na pasta, o serviço `BennerTasksWorker_*` com o DisplayName da linha e o log.
 6. **Instalar 25:** idem, conferindo `backgroundtasksconfig.json` (servidor, sistema, fila, pools Core/Win32) e o serviço `BennerCoreWorker_*`. Sem .NET 8, deve aparecer o aviso de pré-requisito.

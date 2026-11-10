@@ -42,6 +42,7 @@ $script:Settings = [pscustomobject]@{
             NamePrefix  = 'BennerTasksWorker_'
             Display     = 'Benner Tasks Worker'
             Queues      = @('Z_BTLREQUISICOES', 'Z_AGENDAMENTOREQUISICOES')
+            QueueLabels = @{ 'Z_BTLREQUISICOES' = 'Requisições'; 'Z_AGENDAMENTOREQUISICOES' = 'Agendamento' }
             DefaultFila = 'Z_BTLREQUISICOES'
         }
         '25' = [pscustomobject]@{
@@ -51,7 +52,8 @@ $script:Settings = [pscustomobject]@{
             Model       = 'backgroundtasksconfig.json'
             NamePrefix  = 'BennerCoreWorker_'
             Display     = 'Benner Core Worker'
-            Queues      = @('FILA_PADRAO_AMBOS', 'FILA_PADRAO', 'FILA_PADRAO_AGENDAMENTO')
+            Queues      = @('FILA_PADRAO', 'FILA_PADRAO_AGENDAMENTO', 'FILA_PADRAO_AMBOS')
+            QueueLabels = @{ 'FILA_PADRAO' = 'Requisições'; 'FILA_PADRAO_AGENDAMENTO' = 'Agendamento'; 'FILA_PADRAO_AMBOS' = 'Ambos' }
             DefaultFila = 'FILA_PADRAO_AMBOS'
         }
     }
