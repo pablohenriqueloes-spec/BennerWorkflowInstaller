@@ -7,7 +7,7 @@ Instala em lote o Benner Worker nas pastas escolhidas, para as duas versões de 
 | 23 (Tasks Worker, .NET Framework) | `Benner.Tecnologia.Tasks.Worker.exe` | `<exe>.config` gerado do `.config.modelo` | `<exe> install -Chave:valor ...` (Topshelf), igual ao `Instalar.exe` |
 | 25 (Core Worker, .NET 8) | `Benner.Core.Worker.exe` | `backgroundtasksconfig.json` gerado do modelo em `Lib\` | `New-Service` (`BennerCoreWorker_<GUID>`, automático), igual ao `Benner.Core.Worker.Installer.exe` |
 
-O HUB não chama `Instalar.exe` (só tem tela) nem o `Benner.Core.Worker.Installer.exe` (sempre cria uma subpasta extra e devolve código 0 mesmo com erro). Ele faz os mesmos passos na **pasta exata** escolhida na grade:
+O HUB não chama `Instalar.exe` (só tem tela) nem o `Benner.Core.Worker.Installer.exe` (devolve código 0 mesmo com erro). Ele faz os mesmos passos sozinho. Por padrão, como os instaladores, cria uma **subpasta** dentro de cada pasta marcada na grade: `<Sistema>-Requisicoes`, `<Sistema>-Agendamento` ou `<Sistema>-Ambos`, conforme a fila. Desmarcando **Criar subpasta padrão**, instala direto na pasta marcada.
 
 1. copia o conteúdo de `Lib\` do pacote para a pasta (robocopy, sem `Instalar.*`) e tira o bloqueio de internet (`Zone.Identifier`);
 2. gera a configuração a partir do modelo (se já existir, faz backup `.backup_<data>` antes);
@@ -18,15 +18,15 @@ Logs: `C:\ProgramData\Benner\WorkerInstaller\Logs`. Senhas nunca vão para o log
 
 ## Tela
 
-- **Pacote e destino:** pasta dos pacotes (padrão `E:\Benner\Worker`, pode conter `worker23` e `worker25`) e raiz de instalação (padrão `E:\Benner\Ferramentas\Worker`). **Detectar** lista os pacotes encontrados; escolha um. Os valores padrão (servidor, fila, providers, usuário, Pool dinâmica e COMFree) preenchem as linhas novas e podem ser aplicados às marcadas.
+- **Pacote e destino:** pasta dos pacotes (padrão `E:\Benner\Worker`, pode conter `worker23` e `worker25`) e raiz de instalação (padrão `E:\Benner\Ferramentas\Worker`). **Detectar** lista os pacotes encontrados; escolha um. **Buscar sistemas** consulta no Benner Server os sistemas disponíveis (como a lista dos instaladores) e preenche a lista do Sistema; ao mudar o servidor de uma linha, a lista dela é buscada sozinha. A consulta usa a biblioteca `Lib\Benner.Tecnologia.BServer.Clients.dll` do pacote 23 (a do 25 é .NET 8), então o pacote 23 precisa estar na pasta dos pacotes; sem ele, o Sistema é digitado. Os valores padrão (servidor, fila, providers, usuário, Pool dinâmica e COMFree) preenchem as linhas novas e podem ser aplicados às marcadas.
 - **Instalação:** grade de pastas e subpastas da raiz, como no Workflow (flechinha para abrir, "marcar todos", pesquisa, adicionar pasta). Campos por linha:
 
 | Coluna | Worker 23 | Worker 25 |
 |---|---|---|
 | Servidor | `Servidor` | `SystemSettings.SuperServerHost` e `Host` das filas |
-| Sistema | `Sistema` (padrão: nome da pasta) | `SuperServerSystemName` e `SystemName` das filas |
+| Sistema (lista ou digitado) | `Sistema` (padrão: Sistema dos valores padrão ou nome da pasta) | `SuperServerSystemName` e `SystemName` das filas |
 | DisplayName | nome de exibição do serviço | nome de exibição do serviço |
-| Fila (lista) | `Fila`: Requisições (`Z_BTLREQUISICOES`, padrão) ou Agendamento (`Z_AGENDAMENTOREQUISICOES`) | `ConsumerSettings.Name`: Requisições (`FILA_PADRAO`), Agendamento (`FILA_PADRAO_AGENDAMENTO`) ou Ambos (`FILA_PADRAO_AMBOS`, padrão) |
+| Fila (lista) | `Fila`: Requisições (`Z_BTLREQUISICOES`), Agendamento (`Z_AGENDAMENTOREQUISICOES`) ou Ambos (padrão: **dois serviços**, um por fila, em `<Sistema>-Requisicoes` e `<Sistema>-Agendamento`, com os mesmos valores) | `ConsumerSettings.Name`: Requisições (`FILA_PADRAO`), Agendamento (`FILA_PADRAO_AGENDAMENTO`) ou Ambos (`FILA_PADRAO_AMBOS`, padrão) |
 | Providers | `NumeroDeProviders` (0 = automático) | providers Core (`CoreSettings` pool) |
 | Win32 | (oculta) | providers Win32 (`LegacySettings` pool) |
 | Usuário | `Usuario` (padrão `SYSDBA`) | `UserContext.UserHandle` (número, opcional) |
@@ -45,7 +45,11 @@ $log = New-HubLogFile -Directory (Get-WorkerSettings).LogDirectory -Prefix 'Work
 $p = Get-WorkerDefaultParameters -Version $pkg.Version
 $p.Servidor = 'servidor'; $p.Sistema = 'SISTEMA'; $p.Nome = 'SISTEMA_PRD'; $p.DisplayName = 'Benner Core Worker [SISTEMA_PRD]'
 Test-WorkerParameters -Parameters $p          # vazio = ok
-Install-WorkerInstance -Package $pkg -Folder 'E:\Benner\Ferramentas\Worker\SISTEMA_PRD' -Parameters $p -LogFile $log
+Get-WorkerSystemNames -Server 'servidor' -LibFolder (Find-WorkerClientLibrary -Package $pkg -PackageRoot 'E:\Benner\Worker')
+# Subpasta padrão (e dois serviços quando a fila é Ambos no 23):
+foreach ($t in Get-WorkerInstallTargets -Version $pkg.Version -Folder 'E:\Benner\Ferramentas\Worker\SISTEMA_PRD' -Parameters $p -Subfolder) {
+    Install-WorkerInstance -Package $pkg -Folder $t.Folder -Parameters $t.Parameters -LogFile $log
+}
 Get-WorkerInstalledService
 ```
 
@@ -55,9 +59,9 @@ Faça num servidor de homologação, com uma raiz de teste (ex.: `E:\Teste\Worke
 
 1. **Abertura:** o menu mostra Workflow e Worker. Abra o Worker.
 2. **Pacotes:** aponte para a pasta com `worker23` e `worker25`, clique em Detectar e confira as duas opções. Troque entre elas: as colunas Win32, Pool dinâmica, COMFree e o rótulo de Usuário/UserHandle devem mudar.
-3. **Grade:** clique em Listar pastas, abra uma subpasta, adicione `TESTE23` e `TESTE25`. Confira Sistema = nome da pasta, Usuário = SYSDBA (23) e o DisplayName sugerido. Edite os campos por linha e escolha a Fila na lista (23: Requisições ou Agendamento; 25: também Ambos).
+3. **Grade:** clique em Listar pastas, abra uma subpasta, adicione `TESTE23` e `TESTE25`. Informe o Benner Server, clique em **Buscar sistemas** e confira a lista no Sistema (padrão e linhas). Teste também um servidor inexistente (mensagem em até 30 s, Sistema digitável). Confira Usuário = SYSDBA (23) e o DisplayName sugerido. Edite os campos por linha e escolha a Fila na lista.
 4. **Validação:** deixe Servidor vazio numa linha, repita um DisplayName de um serviço existente, marque uma pasta e uma subpasta dela: cada caso deve bloquear com mensagem.
-5. **Instalar 23:** confira a prévia, instale, veja as etapas (cópia, config, registro, início), o `.config` gerado na pasta, o serviço `BennerTasksWorker_*` com o DisplayName da linha e o log.
+5. **Instalar 23 com Ambos:** confira na prévia as duas subpastas `<Sistema>-Requisicoes` e `<Sistema>-Agendamento`, instale e confira os dois serviços (DisplayName com "(Requisições)" e "(Agendamento)") e o Resultado da linha com as duas partes. Repita com uma fila só e com **Criar subpasta padrão** desmarcado (Ambos no 23 deve bloquear). Confira as etapas (cópia, config, registro, início), o `.config` gerado na pasta, o serviço `BennerTasksWorker_*` com o DisplayName da linha e o log.
 6. **Instalar 25:** idem, conferindo `backgroundtasksconfig.json` (servidor, sistema, fila, pools Core/Win32) e o serviço `BennerCoreWorker_*`. Sem .NET 8, deve aparecer o aviso de pré-requisito.
 7. **Instalados:** os dois aparecem; troque a conta de logon de um (senha errada e depois certa); remova um com "Apagar também a pasta" e confira que a pasta só some depois do serviço sair do SCM.
 

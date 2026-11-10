@@ -28,6 +28,12 @@ if (-not (Get-Module -Name 'BennerHub.Core')) {
     Import-Module (Join-Path $PSScriptRoot '..\..\Core\BennerHub.Core.psm1') -Global -DisableNameChecking
 }
 
+# Nome curto de cada fila, usado na subpasta padrao (<Sistema>-<Tipo>) e no Nome do servico.
+$script:QueueKinds = @{
+    'Z_BTLREQUISICOES' = 'Requisicoes'; 'Z_AGENDAMENTOREQUISICOES' = 'Agendamento'
+    'FILA_PADRAO' = 'Requisicoes'; 'FILA_PADRAO_AGENDAMENTO' = 'Agendamento'; 'FILA_PADRAO_AMBOS' = 'Ambos'
+}
+
 $script:Settings = [pscustomobject]@{
     LogDirectory   = (Join-Path $env:ProgramData 'Benner\WorkerInstaller\Logs')
     DefaultPackage = 'E:\Benner\Worker'
@@ -41,9 +47,12 @@ $script:Settings = [pscustomobject]@{
             Model       = 'Benner.Tecnologia.Tasks.Worker.exe.config.modelo'
             NamePrefix  = 'BennerTasksWorker_'
             Display     = 'Benner Tasks Worker'
-            Queues      = @('Z_BTLREQUISICOES', 'Z_AGENDAMENTOREQUISICOES')
-            QueueLabels = @{ 'Z_BTLREQUISICOES' = 'Requisições'; 'Z_AGENDAMENTOREQUISICOES' = 'Agendamento' }
-            DefaultFila = 'Z_BTLREQUISICOES'
+            # O Worker 23 consome uma fila por servico. 'AMBOS' nao e fila: vira dois servicos (SplitQueues),
+            # cada um na sua subpasta (Get-WorkerInstallTargets).
+            Queues      = @('Z_BTLREQUISICOES', 'Z_AGENDAMENTOREQUISICOES', 'AMBOS')
+            QueueLabels = @{ 'Z_BTLREQUISICOES' = 'Requisições'; 'Z_AGENDAMENTOREQUISICOES' = 'Agendamento'; 'AMBOS' = 'Ambos (2 serviços)' }
+            SplitQueues = @('Z_BTLREQUISICOES', 'Z_AGENDAMENTOREQUISICOES')
+            DefaultFila = 'AMBOS'
         }
         '25' = [pscustomobject]@{
             Version     = '25'
@@ -54,6 +63,7 @@ $script:Settings = [pscustomobject]@{
             Display     = 'Benner Core Worker'
             Queues      = @('FILA_PADRAO', 'FILA_PADRAO_AGENDAMENTO', 'FILA_PADRAO_AMBOS')
             QueueLabels = @{ 'FILA_PADRAO' = 'Requisições'; 'FILA_PADRAO_AGENDAMENTO' = 'Agendamento'; 'FILA_PADRAO_AMBOS' = 'Ambos' }
+            SplitQueues = @()
             DefaultFila = 'FILA_PADRAO_AMBOS'
         }
     }
@@ -519,6 +529,154 @@ function Set-Worker25Config {
 # ---------------------------------------------------------------------------
 # Etapa 3: criacao do servico
 # ---------------------------------------------------------------------------
+function Get-WorkerQueueKind {
+    <# Nome curto da fila (Requisicoes, Agendamento, Ambos); para outra fila, o proprio nome. #>
+    param([string]$Fila)
+    $f = ([string]$Fila).Trim()
+    if ($script:QueueKinds.ContainsKey($f)) { return $script:QueueKinds[$f] }
+    return (Get-WorkerSafeName $f)
+}
+
+function Get-WorkerInstallTargets {
+    <#
+    Pastas e parametros de cada servico que uma linha gera:
+      - sem -Subfolder: um servico na propria -Folder;
+      - com -Subfolder (modo padrao): um servico em <Folder>\<Sistema>-<Tipo da fila>, como os instaladores
+        oficiais que criam uma subpasta no local escolhido;
+      - Worker 23 com Fila 'AMBOS': dois servicos (Requisicoes e Agendamento) com os mesmos valores, cada um
+        na sua subpasta; exige -Subfolder. O Nome e o DisplayName ganham o tipo para ficarem unicos.
+    Devolve objetos com Folder, Parameters (copia) e Tag ('' ou o rotulo da fila quando a linha gera dois).
+    #>
+    param([Parameter(Mandatory)][ValidateSet('23', '25')][string]$Version, [Parameter(Mandatory)][string]$Folder,
+        [Parameter(Mandatory)][hashtable]$Parameters, [switch]$Subfolder)
+    $info = $script:Settings.Versions[$Version]
+    $fila = ([string]$Parameters.Fila).Trim()
+    $split = ($Version -eq '23' -and $fila -ieq 'AMBOS')
+    $queues = $(if ($split) { @($info.SplitQueues) } else { @($fila) })
+    if ($split -and -not $Subfolder) { throw 'Fila "Ambos" no Worker 23 cria dois serviços e precisa da opção de subpasta padrão.' }
+    $sistema = ([string]$Parameters.Sistema).Trim()
+    $result = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($q in $queues) {
+        $p = $Parameters.Clone()
+        $p.Version = $Version
+        $p.Fila = $q
+        $kind = Get-WorkerQueueKind $q
+        $tag = ''
+        if ($split) {
+            $tag = [string]$info.QueueLabels[$q]
+            $nome = Get-WorkerSafeName $p.Nome
+            $p.Nome = $(if ($nome) { "${nome}_$kind" } else { $kind })
+            $dn = ([string]$p.DisplayName).Trim()
+            if ($dn) { $p.DisplayName = "$dn ($tag)" }
+        }
+        $target = $Folder
+        if ($Subfolder) {
+            $name = '{0}-{1}' -f $sistema, $kind
+            if (-not $sistema -or -not (Test-WorkerFolderName -Name $name)) { throw "Nome de subpasta invalido: '$name' (confira o Sistema)." }
+            $target = Join-Path $Folder $name
+        }
+        $result.Add([pscustomobject]@{ Folder = $target; Parameters = $p; Tag = $tag })
+    }
+    return , $result.ToArray()
+}
+
+# ---------------------------------------------------------------------------
+# Sistemas do Benner Server (como a lista "Sistema" dos instaladores oficiais)
+# ---------------------------------------------------------------------------
+# Os instaladores conectam no Benner Server com a biblioteca Benner.Tecnologia.BServer.Clients e chamam
+# GetSystemNames (o do 25 sem login). O HUB faz o mesmo num processo filho com a biblioteca .NET Framework
+# do pacote 23 (a do 25 e .NET 8 e nao carrega no Windows PowerShell). As DLLs sao lidas em memoria para
+# nao depender do desbloqueio do pacote e nao travar os arquivos.
+$script:SystemNamesChildCode = @'
+$global:WkLib=$args[0]; $server=$args[1]; $out=$args[2]
+$ErrorActionPreference='Stop'
+$global:WkAsm=@{}
+function global:Get-WkAssembly([string]$Name) {
+    if ($global:WkAsm.ContainsKey($Name)) { return $global:WkAsm[$Name] }
+    $f = Join-Path $global:WkLib ($Name + '.dll')
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
+    $a = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($f))
+    $global:WkAsm[$Name] = $a
+    return $a
+}
+[AppDomain]::CurrentDomain.add_AssemblyResolve({ param($s, $e) Get-WkAssembly ((New-Object Reflection.AssemblyName($e.Name)).Name) })
+try {
+    $asm = Get-WkAssembly 'Benner.Tecnologia.BServer.Clients'
+    if ($null -eq $asm) { throw 'Benner.Tecnologia.BServer.Clients.dll nao encontrada.' }
+    $client = [Activator]::CreateInstance($asm.GetType('Benner.Tecnologia.BServer.Clients.BConnectionClient', $true))
+    try {
+        $client.Connect($server)
+        $list = New-Object System.Collections.ArrayList
+        $client.GetSystemNames($list)
+        $names = @($list | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+        [IO.File]::WriteAllLines($out, [string[]]$names, (New-Object Text.UTF8Encoding($false)))
+    } finally { try { $client.Dispose() } catch {} }
+    exit 0
+} catch {
+    $ex = $_.Exception
+    while ($null -ne $ex.InnerException) { $ex = $ex.InnerException }
+    [IO.File]::WriteAllText($out + '.erro', [string]$ex.Message, (New-Object Text.UTF8Encoding($false)))
+    exit 1
+}
+'@
+
+function Find-WorkerClientLibrary {
+    <#
+    Pasta Lib com a Benner.Tecnologia.BServer.Clients.dll .NET Framework (pacote 23), usada para listar
+    os sistemas. Procura no -Package (se for 23) e depois nos pacotes 23 de -PackageRoot. $null se nao achar.
+    #>
+    param($Package, [string]$PackageRoot)
+    $dll = 'Benner.Tecnologia.BServer.Clients.dll'
+    if ($null -ne $Package -and $Package.Version -eq '23' -and (Test-Path -LiteralPath (Join-Path $Package.Lib $dll) -PathType Leaf)) { return $Package.Lib }
+    if (-not [string]::IsNullOrWhiteSpace($PackageRoot) -and (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
+        foreach ($p in @(Find-WorkerPackage -Root $PackageRoot)) {
+            if ($p.Version -eq '23' -and (Test-Path -LiteralPath (Join-Path $p.Lib $dll) -PathType Leaf)) { return $p.Lib }
+        }
+    }
+    return $null
+}
+
+function Start-WorkerSystemNamesQuery {
+    <#
+    Pede ao Benner Server a lista de sistemas, em processo filho oculto (a conexao pode demorar).
+    Devolve Process, Server e OutFile; acompanhe Process.HasExited e leia com Read-WorkerSystemNamesResult.
+    #>
+    param([Parameter(Mandatory)][string]$Server, [Parameter(Mandatory)][string]$LibFolder)
+    $srv = $Server.Trim()
+    if ($srv -notmatch '^[^\s"''<>|&;]+$') { throw "Benner Server invalido: $srv" }
+    $out = Join-Path ([IO.Path]::GetTempPath()) ('BennerHub_Sistemas_{0}.txt' -f [guid]::NewGuid().ToString('N'))
+    $proc = Start-HubPowerShellProcess -Code $script:SystemNamesChildCode -Arguments @($LibFolder, $srv, $out) -WorkingDirectory $LibFolder
+    return [pscustomobject]@{ Process = $proc; Server = $srv; OutFile = $out; Started = (Get-Date) }
+}
+
+function Read-WorkerSystemNamesResult {
+    <# Le o resultado de Start-WorkerSystemNamesQuery (lista de nomes) e apaga os temporarios. Lanca a mensagem de erro do servidor. #>
+    param([Parameter(Mandatory)]$Query)
+    $err = $Query.OutFile + '.erro'
+    try {
+        if (Test-Path -LiteralPath $err -PathType Leaf) { throw ('Benner Server {0}: {1}' -f $Query.Server, [IO.File]::ReadAllText($err).Trim()) }
+        if (-not (Test-Path -LiteralPath $Query.OutFile -PathType Leaf)) { throw "Benner Server $($Query.Server): sem resposta (codigo $($Query.Process.ExitCode))." }
+        return , @([IO.File]::ReadAllLines($Query.OutFile) | Where-Object { $_.Trim() })
+    } finally {
+        foreach ($f in @($Query.OutFile, $err)) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Stop-WorkerSystemNamesQuery {
+    param([Parameter(Mandatory)]$Query)
+    try { if (-not $Query.Process.HasExited) { $Query.Process.Kill() } } catch {}
+    try { $Query.Process.Dispose() } catch {}
+    foreach ($f in @($Query.OutFile, ($Query.OutFile + '.erro'))) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+}
+
+function Get-WorkerSystemNames {
+    <# Versao sincrona (scripts): lista de sistemas do Benner Server, com limite de tempo. #>
+    param([Parameter(Mandatory)][string]$Server, [Parameter(Mandatory)][string]$LibFolder, [int]$TimeoutSeconds = 30)
+    $q = Start-WorkerSystemNamesQuery -Server $Server -LibFolder $LibFolder
+    if (-not $q.Process.WaitForExit($TimeoutSeconds * 1000)) { Stop-WorkerSystemNamesQuery $q; throw "Benner Server ${Server}: tempo esgotado." }
+    try { return , (Read-WorkerSystemNamesResult -Query $q) } finally { try { $q.Process.Dispose() } catch {} }
+}
+
 function New-WorkerServiceName {
     <# Nome interno no padrao dos instaladores oficiais: BennerTasksWorker_<GUID> / BennerCoreWorker_<GUID>. #>
     param([Parameter(Mandatory)][ValidateSet('23', '25')][string]$Version)

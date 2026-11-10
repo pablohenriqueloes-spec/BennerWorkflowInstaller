@@ -48,7 +48,14 @@
                   </ControlTemplate>
                 </ToggleButton.Template>
               </ToggleButton>
-              <ContentPresenter IsHitTestVisible="False" Margin="{TemplateBinding Padding}" Content="{TemplateBinding SelectionBoxItem}"
+              <TextBox x:Name="PART_EditableTextBox" Visibility="Collapsed" Margin="1,1,22,1" Padding="{TemplateBinding Padding}"
+                       Background="Transparent" BorderThickness="0" Foreground="{TemplateBinding Foreground}" CaretBrush="{StaticResource Brush.Ink}"
+                       VerticalContentAlignment="Center" IsReadOnly="{TemplateBinding IsReadOnly}">
+                <TextBox.Template>
+                  <ControlTemplate TargetType="TextBox"><ScrollViewer x:Name="PART_ContentHost" Margin="0" VerticalAlignment="Center"/></ControlTemplate>
+                </TextBox.Template>
+              </TextBox>
+              <ContentPresenter x:Name="Selected" IsHitTestVisible="False" Margin="{TemplateBinding Padding}" Content="{TemplateBinding SelectionBoxItem}"
                                 ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
                                 TextElement.Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center" HorizontalAlignment="Left"/>
               <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
@@ -60,6 +67,10 @@
             </Grid>
             <ControlTemplate.Triggers>
               <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+              <Trigger Property="IsEditable" Value="True">
+                <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible"/>
+                <Setter TargetName="Selected" Property="Visibility" Value="Collapsed"/>
+              </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -114,6 +125,15 @@
               <TextBox x:Name="DefaultServerBox" Width="200"/>
             </StackPanel>
             <StackPanel Margin="0,0,12,0">
+              <TextBlock Text="Sistema (vazio = nome da pasta)" Style="{StaticResource Text.Label}"/>
+              <StackPanel Orientation="Horizontal">
+                <ComboBox x:Name="DefaultSystemBox" Width="200" IsEditable="True" Style="{StaticResource WorkerCombo}"
+                          ToolTip="Escolha um sistema da lista (Buscar sistemas) ou digite o nome."/>
+                <Button x:Name="SystemsButton" Content="Buscar sistemas" Style="{StaticResource Btn.Light}" Margin="6,0,0,0"
+                        ToolTip="Consulta no Benner Server os sistemas disponíveis, como os instaladores oficiais."/>
+              </StackPanel>
+            </StackPanel>
+            <StackPanel Margin="0,0,12,0">
               <TextBlock x:Name="DefaultFilaLabel" Text="Fila" Style="{StaticResource Text.Label}"/>
               <ComboBox x:Name="DefaultFilaBox" Width="260" Style="{StaticResource WorkerCombo}" DisplayMemberPath="[Label]" SelectedValuePath="[Value]"/>
             </StackPanel>
@@ -134,8 +154,10 @@
               <CheckBox x:Name="DefaultComFreeCheck" Content="Usar COMFree"/>
             </StackPanel>
             <Button x:Name="ApplyDefaultsButton" Content="Aplicar às marcadas" VerticalAlignment="Bottom" IsEnabled="False"
-                    ToolTip="Copia os valores acima para as linhas marcadas para instalar (Sistema e Nome de exibição não mudam)."/>
+                    ToolTip="Copia os valores acima para as linhas marcadas para instalar (Sistema só se estiver preenchido; Nome de exibição não muda)."/>
           </WrapPanel>
+          <TextBlock x:Name="SystemsInfo" Style="{StaticResource Text.Muted}" TextWrapping="Wrap" Margin="0,8,0,0"
+                     Text="Informe o Benner Server e clique em Buscar sistemas para escolher o Sistema numa lista."/>
         </StackPanel>
       </Border>
 
@@ -189,8 +211,15 @@
               </DataGridTemplateColumn>
               <DataGridTextColumn Header="Benner Server" Binding="{Binding [Servidor]}" Width="150" MinWidth="100"
                                   ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEdit}"/>
-              <DataGridTextColumn Header="Sistema" Binding="{Binding [Sistema]}" Width="130" MinWidth="90"
-                                  ElementStyle="{StaticResource CellMono}" EditingElementStyle="{StaticResource CellEdit}"/>
+              <DataGridTemplateColumn Header="Sistema" Width="170" MinWidth="110">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <ComboBox Style="{StaticResource WorkerCombo}" Margin="2,1" Padding="6,2" IsEditable="True"
+                              ItemsSource="{Binding [SystemOptions]}" Text="{Binding [Sistema], UpdateSourceTrigger=PropertyChanged}"
+                              ToolTip="Escolha da lista do Benner Server da linha ou digite o nome."/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
               <DataGridTextColumn Header="Nome de exibição (editável)" Binding="{Binding [DisplayName]}" Width="280" MinWidth="160"
                                   ElementStyle="{StaticResource CellText}" EditingElementStyle="{StaticResource CellEdit}"/>
               <DataGridTemplateColumn Header="Fila" Width="240" MinWidth="150">
@@ -275,6 +304,8 @@
           <Border Height="1" Background="{StaticResource Brush.Line}" Margin="0,14,0,12"/>
           <DockPanel LastChildFill="False">
             <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+              <CheckBox x:Name="SubfolderCheck" Content="Criar subpasta padrão (Sistema-Fila)" IsChecked="True" Margin="0,0,16,0"
+                        ToolTip="Como os instaladores: cria a subpasta &lt;Sistema&gt;-&lt;Requisicoes|Agendamento|Ambos&gt; dentro da pasta marcada. Fila Ambos no Worker 23 cria duas subpastas (dois serviços)."/>
               <CheckBox x:Name="StartAfterCheck" Content="Iniciar o serviço após instalar" IsChecked="True" Margin="0,0,16,0"/>
               <Button x:Name="LogsButton" Content="Abrir logs" Style="{StaticResource Btn.Ghost}"/>
             </StackPanel>

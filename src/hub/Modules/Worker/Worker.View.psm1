@@ -24,6 +24,11 @@ $script:EditableKeys = @('Servidor', 'Sistema', 'DisplayName', 'Fila', 'Provider
 # copy -> (config) -> register (so no 23) -> start -> fim.
 $script:Queue = @(); $script:QueuePosition = 0; $script:CurrentTask = $null; $script:SessionLog = $null
 
+# Sistemas por Benner Server (cache da consulta; lista vazia = consulta falhou) e consulta em andamento.
+$script:SystemCache = @{}
+$script:SystemQuery = $null
+$script:SystemPending = New-Object 'System.Collections.Generic.List[string]'
+
 # Colunas da grade de pastas (indices no XAML).
 $script:Col = @{ Providers = 6; Win32 = 7; Usuario = 8; Pool = 9; ComFree = 10 }
 
@@ -122,7 +127,7 @@ function Update-Commands {
     $loginCount = (Get-CheckedRows $script:InstalledRows 'LoginSel').Count
     $removeCount = (Get-CheckedRows $script:InstalledRows 'Remove').Count
     foreach ($n in 'PackageBox', 'PackageBrowse', 'PackageDetect', 'PackagePanel', 'RootBox', 'RootBrowse', 'ListButton', 'NewFolderBox', 'AddFolderButton',
-        'RefreshButton', 'StartAfterCheck', 'DeleteFolderCheck') { $script:UI[$n].IsEnabled = -not $busy }
+        'RefreshButton', 'StartAfterCheck', 'SubfolderCheck', 'DeleteFolderCheck') { $script:UI[$n].IsEnabled = -not $busy }
     $script:UI.FolderGrid.IsReadOnly = $f.Installing
     $script:UI.InstalledGrid.IsReadOnly = ($f.Removing -or $f.ChangingLogin)
     $script:UI.InstallButton.IsEnabled = ($installCount -gt 0 -and -not $busy -and $null -ne $script:Package)
@@ -160,9 +165,12 @@ function Get-RowParameters($Row) {
 function Update-Preview {
     if ($null -eq $script:Package) { $script:UI.PreviewBox.Text = 'Selecione um pacote Worker (23 ou 25).'; return }
     $parts = New-Object 'System.Collections.Generic.List[string]'
+    $sub = [bool]$script:UI.SubfolderCheck.IsChecked
     foreach ($row in (Get-CheckedRows $script:FolderRows 'Install')) {
-        try { $parts.Add((Get-WorkerInstallPreview -Package $script:Package -Folder ([string]$row['Path']) -Parameters (Get-RowParameters $row))) }
-        catch { $parts.Add("# $($row['Path']): $($_.Exception.Message)") }
+        try {
+            $targets = Get-WorkerInstallTargets -Version $script:Package.Version -Folder ([string]$row['Path']) -Parameters (Get-RowParameters $row) -Subfolder:$sub
+            foreach ($tg in $targets) { $parts.Add((Get-WorkerInstallPreview -Package $script:Package -Folder $tg.Folder -Parameters $tg.Parameters)) }
+        } catch { $parts.Add("# $($row['Path']): $($_.Exception.Message)") }
     }
     $script:UI.PreviewBox.Text = ($parts -join ([Environment]::NewLine + [Environment]::NewLine))
 }
@@ -372,7 +380,9 @@ function New-FolderRow([string]$Name, [string]$Path, [int]$Level, [string]$Paren
     $row['Indent'] = New-Object System.Windows.Thickness ((22 * $Level), 0, 0, 0)
     Set-ExpandState $row
     $row['Servidor'] = $script:UI.DefaultServerBox.Text.Trim()
-    $row['Sistema'] = $Name
+    $defSystem = $script:UI.DefaultSystemBox.Text.Trim()
+    $row['Sistema'] = $(if ($defSystem) { $defSystem } else { $Name })
+    Set-RowSystemOptions $row
     $row['Nome'] = Get-WorkerSafeName ((Get-RelativeName $Path).Replace('\', '_'))
     $row['AutoDisplay'] = $true
     Set-RowVersionDefaults $row
@@ -388,6 +398,7 @@ function On-FolderRowChanged($Row, [string]$Key) {
     if ($script:BulkUpdate) { return }
     switch ($Key) {
         'Install' { Update-Selection }
+        'Servidor' { Set-RowSystemOptions $Row -Request; Update-Preview }
         'DisplayName' { $Row['AutoDisplay'] = ([string]$Row['DisplayName'] -ceq (Get-DefaultDisplayName $Row)); Update-Preview }
         default { if ($script:EditableKeys -contains $Key) { Update-Preview } }
     }
@@ -540,6 +551,82 @@ function Invoke-CheckChildren {
     }
 }
 
+# ---------------------------------------------------------------------------
+# Sistemas do Benner Server (lista do campo Sistema)
+# ---------------------------------------------------------------------------
+function Set-RowSystemOptions($Row, [switch]$Request) {
+    <# Lista de sistemas da linha = cache do Benner Server dela; com -Request, consulta se ainda nao houver cache. #>
+    $server = ([string]$Row['Servidor']).Trim()
+    if ($server -and $script:SystemCache.ContainsKey($server.ToLowerInvariant())) { $Row['SystemOptions'] = $script:SystemCache[$server.ToLowerInvariant()]; return }
+    $Row['SystemOptions'] = @()
+    if ($Request -and $server) { Request-SystemNames $server }
+}
+
+function Request-SystemNames([string]$Server, [switch]$Force) {
+    $srv = $Server.Trim()
+    if (-not $srv) { return }
+    $key = $srv.ToLowerInvariant()
+    if ($Force) { [void]$script:SystemCache.Remove($key) }
+    if ($script:SystemCache.ContainsKey($key)) { Update-SystemLists $srv; return }
+    if ($null -ne $script:SystemQuery -and $script:SystemQuery.Server -ieq $srv) { return }
+    if (-not ($script:SystemPending -contains $key)) { $script:SystemPending.Add($key) }
+    Start-NextSystemQuery
+}
+
+function Start-NextSystemQuery {
+    if ($null -ne $script:SystemQuery -or $script:SystemPending.Count -eq 0) { return }
+    $srv = $script:SystemPending[0]; $script:SystemPending.RemoveAt(0)
+    $lib = Find-WorkerClientLibrary -Package $script:Package -PackageRoot $script:UI.PackageBox.Text.Trim()
+    if (-not $lib) {
+        $script:UI.SystemsInfo.Text = 'Para buscar os sistemas o HUB usa a biblioteca do pacote Worker 23 (Lib\Benner.Tecnologia.BServer.Clients.dll), que não foi encontrado na pasta dos pacotes. Digite o Sistema.'
+        $script:SystemPending.Clear()
+        return
+    }
+    try { $script:SystemQuery = Start-WorkerSystemNamesQuery -Server $srv -LibFolder $lib }
+    catch { $script:SystemCache[$srv] = @(); $script:UI.SystemsInfo.Text = "Não foi possível buscar os sistemas: $($_.Exception.Message)"; Start-NextSystemQuery; return }
+    $script:UI.SystemsInfo.Text = "Buscando os sistemas no Benner Server $srv..."
+    $script:SystemTimer.Start()
+}
+
+function On-SystemTick {
+    $q = $script:SystemQuery
+    if ($null -eq $q) { $script:SystemTimer.Stop(); return }
+    $key = $q.Server.ToLowerInvariant()
+    if (-not $q.Process.HasExited) {
+        if (((Get-Date) - $q.Started).TotalSeconds -lt 30) { return }
+        Stop-WorkerSystemNamesQuery $q
+        $script:SystemQuery = $null
+        $script:SystemCache[$key] = @()
+        $script:UI.SystemsInfo.Text = "Benner Server $($q.Server): sem resposta em 30 s. Confira o nome/porta ou digite o Sistema."
+    } else {
+        $script:SystemQuery = $null
+        try {
+            $names = Read-WorkerSystemNamesResult -Query $q
+            $script:SystemCache[$key] = [string[]]$names
+            $script:UI.SystemsInfo.Text = "$($names.Count) sistema(s) no Benner Server $($q.Server). Escolha na lista do Sistema (ou digite)."
+        } catch {
+            $script:SystemCache[$key] = @()
+            $script:UI.SystemsInfo.Text = "Não foi possível buscar os sistemas: $($_.Exception.Message). Digite o Sistema."
+        } finally { try { $q.Process.Dispose() } catch {} }
+    }
+    Update-SystemLists $q.Server
+    if ($null -eq $script:SystemQuery -and $script:SystemPending.Count -eq 0) { $script:SystemTimer.Stop() }
+    Start-NextSystemQuery
+}
+
+function Update-SystemLists([string]$Server) {
+    <# Aplica a lista em cache nas linhas desse Benner Server e no campo Sistema dos valores padrao. #>
+    $key = $Server.Trim().ToLowerInvariant()
+    $names = $script:SystemCache[$key]
+    if ($null -eq $names) { return }
+    foreach ($row in $script:FolderRows) { if (([string]$row['Servidor']).Trim().ToLowerInvariant() -eq $key) { $row['SystemOptions'] = $names } }
+    if ($script:UI.DefaultServerBox.Text.Trim().ToLowerInvariant() -eq $key) {
+        $text = $script:UI.DefaultSystemBox.Text
+        $script:UI.DefaultSystemBox.ItemsSource = $names
+        $script:UI.DefaultSystemBox.Text = $text
+    }
+}
+
 function Invoke-ApplyDefaults {
     if (Test-WorkerViewBusy) { return }
     Commit-Grid $script:UI.FolderGrid
@@ -549,7 +636,10 @@ function Invoke-ApplyDefaults {
     try {
         foreach ($row in $rows) {
             $row['Servidor'] = $script:UI.DefaultServerBox.Text.Trim()
+            $defSystem = $script:UI.DefaultSystemBox.Text.Trim()
+            if ($defSystem) { $row['Sistema'] = $defSystem }
             Set-RowVersionDefaults $row
+            Set-RowSystemOptions $row
         }
     } finally { $script:BulkUpdate = $false }
     Update-Selection
@@ -568,6 +658,7 @@ function Invoke-Install {
     $root = $script:UI.RootBox.Text.Trim().TrimEnd('\')
     $rows = Get-CheckedRows $script:FolderRows 'Install'
     if ($rows.Count -eq 0) { return }
+    $sub = [bool]$script:UI.SubfolderCheck.IsChecked
     $services = @(Get-WorkerInstalledService -All)
     $existingDisplay = Get-WorkerExistingDisplayNames
     $displays = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -578,17 +669,25 @@ function Invoke-Install {
         $folder = [string]$row['Path']
         $label = Get-RelativeName $folder
         if (-not (Test-WorkerInsideRoot -Folder $folder -Root $root)) { $problems.Add("${label}: pasta fora da raiz de instalação ou com link/junction."); continue }
-        if ($row['FolderState'] -eq 'instalado') { $problems.Add("${label}: $($row['State']). Remova o serviço antes ou escolha outra pasta."); continue }
+        if (-not $sub -and $row['FolderState'] -eq 'instalado') { $problems.Add("${label}: $($row['State']). Remova o serviço antes ou escolha outra pasta."); continue }
         $p = Get-RowParameters $row
         $bad = Test-WorkerParameters -Parameters $p -Label $label
         if ($bad.Count -gt 0) { $problems.AddRange([string[]]$bad); continue }
-        $display = Resolve-WorkerDisplayName -Parameters $p
-        if (-not $displays.Add($display)) { $problems.Add("${label}: nome de exibição repetido na seleção: $display"); continue }
-        if ($existingDisplay.Contains($display)) { $problems.Add("${label}: já existe um serviço com o nome de exibição: $display"); continue }
-        $tasks.Add([pscustomobject]@{
-                Row = $row; Folder = $folder; Label = $label; Params = $p; Display = $display
-                Phase = ''; Process = $null; ServiceName = ''; ConfigResult = ''; CopyLog = ''; DetailLog = ''; Deadline = $null
-            })
+        try { $targets = Get-WorkerInstallTargets -Version $pkg.Version -Folder $folder -Parameters $p -Subfolder:$sub }
+        catch { $problems.Add("${label}: $($_.Exception.Message)"); continue }
+        foreach ($tg in $targets) {
+            $tLabel = Get-RelativeName $tg.Folder
+            if (-not (Test-WorkerInsideRoot -Folder $tg.Folder -Root $root)) { $problems.Add("${tLabel}: pasta fora da raiz de instalação ou com link/junction."); continue }
+            $st = Get-WorkerFolderState -Folder $tg.Folder -Services $services
+            if ($st.State -eq 'instalado') { $problems.Add("${tLabel}: $($st.Text). Remova o serviço antes ou escolha outra pasta."); continue }
+            $display = Resolve-WorkerDisplayName -Parameters $tg.Parameters
+            if (-not $displays.Add($display)) { $problems.Add("${tLabel}: nome de exibição repetido na seleção: $display"); continue }
+            if ($existingDisplay.Contains($display)) { $problems.Add("${tLabel}: já existe um serviço com o nome de exibição: $display"); continue }
+            $tasks.Add([pscustomobject]@{
+                    Row = $row; Folder = $tg.Folder; Label = $tLabel; Params = $tg.Parameters; Display = $display; Tag = $tg.Tag; FolderState = $st.State
+                    Phase = ''; Process = $null; ServiceName = ''; ConfigResult = ''; CopyLog = ''; DetailLog = ''; Deadline = $null; ResultKind = ''
+                })
+        }
     }
     $full = @($tasks | ForEach-Object { [IO.Path]::GetFullPath($_.Folder).TrimEnd('\') })
     foreach ($a in $full) { foreach ($b in $full) { if ($a -ne $b -and $b.StartsWith($a + '\', [StringComparison]::OrdinalIgnoreCase)) { $problems.Add("Pastas uma dentro da outra na seleção: $a e $b") } } }
@@ -598,10 +697,10 @@ function Invoke-Install {
     $note = ''
     $pre = Test-WorkerPrerequisites -Version $pkg.Version
     if ($pre.Count -gt 0) { $note += "`r`n`r`nATENÇÃO (pré-requisitos):`r`n" + ($pre -join "`r`n") }
-    $withFiles = @($tasks | Where-Object { $_.Row['FolderState'] -in @('arquivos', 'worker') })
+    $withFiles = @($tasks | Where-Object { $_.FolderState -in @('arquivos', 'worker') })
     if ($withFiles.Count -gt 0) { $note += "`r`n`r`n$($withFiles.Count) pasta(s) já têm arquivos. Os arquivos do pacote vão sobrescrever os de mesmo nome (nada é apagado; configuração existente recebe backup):`r`n" + (Format-List @($withFiles | ForEach-Object { $_.Label })) }
     $start = [bool]$script:UI.StartAfterCheck.IsChecked
-    $bulk = Get-BulkNote $tasks.Count (Get-HiddenCount @($tasks | ForEach-Object { $_.Row }))
+    $bulk = Get-BulkNote $tasks.Count (Get-HiddenCount @($tasks | ForEach-Object { $_.Row } | Select-Object -Unique))
     $confirm = $bulk + "Instalar $($tasks.Count) Worker(s) $($pkg.Version) a partir de:`r`n$($pkg.Path)`r`n`r`n" + (Format-List @($tasks | ForEach-Object { "$($_.Display)  ->  $($_.Folder)" }) 10) +
     "`r`n`r`nEm cada pasta: copia Lib\, gera a configuração a partir do modelo, cria o serviço$(if ($start) { ' e inicia' }). Instalações sequenciais não são revertidas automaticamente em caso de falha.$note`r`n`r`nDeseja continuar?"
     if ((Show-HubMessage -Text $confirm -Title 'Confirmar instalação' -Kind Question -YesNo) -ne 'Yes') { return }
@@ -610,7 +709,8 @@ function Invoke-Install {
     Write-HubLog -Path $script:SessionLog -Message "PACOTE | Worker $($pkg.Version) | $($pkg.Path)"
     $script:InstallPackage = $pkg
     $script:InstallStart = $start
-    foreach ($t in $tasks) { Set-RowState $t.Row 'Status' 'Na fila'; $t.Row['StatusTip'] = '' }
+    foreach ($t in $tasks) { $t.Row['StatusParts'] = $null; $t.Row['StatusTip'] = '' }
+    foreach ($t in $tasks) { Set-TaskStatus $t 'Na fila' }
     $script:UI.Progress.Value = 0
     $script:Queue = $tasks.ToArray(); $script:QueuePosition = 0
     $script:Flags.Installing = $true; Update-Commands
@@ -618,9 +718,28 @@ function Invoke-Install {
     if ($script:Flags.Installing) { $script:InstallTimer.Start() }
 }
 
+function Set-TaskStatus($Task, [string]$Text, [string]$Kind = '') {
+    <# Resultado na linha. Quando a linha gera dois servicos (Ambos no 23), mostra os dois: "Requisições: ... | Agendamento: ...". #>
+    if (-not $Task.Tag) { Set-RowState $Task.Row 'Status' $Text $Kind; return }
+    $parts = $Task.Row['StatusParts']
+    if ($null -eq $parts) { $parts = [ordered]@{}; $Task.Row['StatusParts'] = $parts }
+    $parts[$Task.Tag] = [pscustomobject]@{ Text = $Text; Kind = $Kind }
+    $kinds = @($parts.Values | ForEach-Object { $_.Kind })
+    $worst = ''
+    foreach ($k in 'err', 'run', 'warn', 'ok') { if ($kinds -contains $k) { $worst = $k; break } }
+    Set-RowState $Task.Row 'Status' (@($parts.Keys | ForEach-Object { '{0}: {1}' -f $_, $parts[$_].Text }) -join ' | ') $worst
+}
+
+function Add-TaskTip($Task, [string]$Text) {
+    $line = $(if ($Task.Tag) { "$($Task.Tag): $Text" } else { $Text })
+    $old = [string]$Task.Row['StatusTip']
+    $Task.Row['StatusTip'] = $(if ($Task.Tag -and $old) { $old + [Environment]::NewLine + $line } else { $line })
+}
+
 function Set-TaskFailed($Task, [string]$Text, [string]$Detail) {
-    Set-RowState $Task.Row 'Status' $Text 'err'
-    $Task.Row['StatusTip'] = $Detail
+    Set-TaskStatus $Task $Text 'err'
+    $Task.ResultKind = 'err'
+    Add-TaskTip $Task $Detail
     Write-HubLog -Path $script:SessionLog -Message "FALHA | $($Task.Label) | $Text | $Detail"
     if ($null -ne $Task.Process) { try { $Task.Process.Dispose() } catch {}; $Task.Process = $null }
     $Task.Phase = 'done'
@@ -629,8 +748,9 @@ function Set-TaskFailed($Task, [string]$Text, [string]$Detail) {
 }
 
 function Set-TaskDone($Task, [string]$Text, [string]$Kind) {
-    Set-RowState $Task.Row 'Status' $Text $Kind
-    $Task.Row['StatusTip'] = "Serviço: $($Task.ServiceName)"
+    Set-TaskStatus $Task $Text $Kind
+    $Task.ResultKind = $Kind
+    Add-TaskTip $Task "Serviço: $($Task.ServiceName) | $($Task.Folder)"
     Write-HubLog -Path $script:SessionLog -Message "RESULTADO | $($Task.Label) | $Text | $($Task.ServiceName) | $($Task.Display)"
     $Task.Phase = 'done'
     $script:QueuePosition++
@@ -648,7 +768,7 @@ function Start-NextInstallation {
     $stamp = '{0:D3}_{1}' -f $n, (Get-Date -Format 'yyyyMMdd_HHmmss_fff')
     $t.CopyLog = Join-Path $script:Settings.LogDirectory "Worker_${stamp}_copia.log"
     $t.DetailLog = Join-Path $script:Settings.LogDirectory "Worker_${stamp}_servico.log"
-    Set-RowState $t.Row 'Status' 'Copiando arquivos...' 'run'
+    Set-TaskStatus $t 'Copiando arquivos...' 'run'
     try {
         $t.Process = Start-WorkerFileCopy -Package $script:InstallPackage -Folder $t.Folder -CopyLog $t.CopyLog
         $t.Phase = 'copy'
@@ -661,18 +781,18 @@ function Complete-CopyPhase($t) {
     Write-HubLog -Path $script:SessionLog -Message "COPIA | $($t.Label) | robocopy/saida=$code | $($t.CopyLog)"
     if (-not (Test-WorkerCopyExitCode $code)) { Set-TaskFailed $t "Falha (cópia, código $code)" "Veja $($t.CopyLog)"; return }
     if ($code -eq 20) { Write-HubLog -Path $script:SessionLog -Message "AVISO | $($t.Label) | alguns arquivos nao puderam ser desbloqueados" }
-    Set-RowState $t.Row 'Status' 'Configurando...' 'run'
+    Set-TaskStatus $t 'Configurando...' 'run'
     Invoke-HubDoEvents
     try {
         if ($script:InstallPackage.Version -eq '23') {
             $t.ConfigResult = Set-Worker23Config -Folder $t.Folder -Parameters $t.Params -LogFile $script:SessionLog
-            Set-RowState $t.Row 'Status' 'Criando serviço...' 'run'
+            Set-TaskStatus $t 'Criando serviço...' 'run'
             $t.Process = Start-Worker23ServiceInstall -Folder $t.Folder -Parameters $t.Params -DetailLog $t.DetailLog
             $t.Phase = 'register'
         } else {
             $t.ServiceName = New-WorkerServiceName -Version '25'
             $t.ConfigResult = Set-Worker25Config -Folder $t.Folder -Package $script:InstallPackage -ServiceName $t.ServiceName -Parameters $t.Params -LogFile $script:SessionLog
-            Set-RowState $t.Row 'Status' 'Criando serviço...' 'run'
+            Set-TaskStatus $t 'Criando serviço...' 'run'
             New-Worker25Service -Folder $t.Folder -ServiceName $t.ServiceName -DisplayName $t.Display -LogFile $script:SessionLog
             Start-TaskService $t
         }
@@ -695,9 +815,9 @@ function Complete-RegisterPhase($t) {
 
 function Start-TaskService($t) {
     if (-not $script:InstallStart) { Set-TaskDone $t 'Instalado (parado)' 'ok'; return }
-    Set-RowState $t.Row 'Status' 'Iniciando...' 'run'
+    Set-TaskStatus $t 'Iniciando...' 'run'
     try { Start-WorkerService -Name $t.ServiceName -LogFile $script:SessionLog }
-    catch { Set-TaskDone $t 'Instalado, não iniciou' 'warn'; $t.Row['StatusTip'] = $_.Exception.Message; return }
+    catch { $msg = $_.Exception.Message; Set-TaskDone $t 'Instalado, não iniciou' 'warn'; Add-TaskTip $t $msg; return }
     $t.Deadline = (Get-Date).AddSeconds(90)
     $t.Phase = 'start'
 }
@@ -727,13 +847,13 @@ function Finish-Installation {
     $script:InstallTimer.Stop()
     $script:Flags.Installing = $false
     $script:CurrentTask = $null
-    $ok = @($script:Queue | Where-Object { $_.Row['StatusKind'] -eq 'ok' }).Count
-    $warn = @($script:Queue | Where-Object { $_.Row['StatusKind'] -eq 'warn' }).Count
-    $failed = @($script:Queue | Where-Object { $_.Row['StatusKind'] -eq 'err' }).Count
+    $ok = @($script:Queue | Where-Object { $_.ResultKind -eq 'ok' }).Count
+    $warn = @($script:Queue | Where-Object { $_.ResultKind -eq 'warn' }).Count
+    $failed = @($script:Queue | Where-Object { $_.ResultKind -eq 'err' }).Count
     $script:UI.Progress.Value = 100
     $script:UI.ProgressText.Text = "Lote concluído: $ok sucesso(s), $warn com aviso, $failed falha(s)."
     $services = @(Get-WorkerInstalledService -All)
-    foreach ($t in $script:Queue) { Update-RowFolderState $t.Row $services }
+    foreach ($row in @($script:Queue | ForEach-Object { $_.Row } | Select-Object -Unique)) { Update-RowFolderState $row $services }
     Update-Selection
     Refresh-Installed
     Show-HubMessage -Text "Instalação finalizada.`r`n`r`nSucesso: $ok`r`nCom aviso: $warn`r`nFalha: $failed`r`n`r`nPasse o mouse no Resultado para ver o detalhe.`r`nLog: $($script:SessionLog)" -Title 'Resultado da instalação' | Out-Null
@@ -927,6 +1047,18 @@ function New-WorkerView {
     $ui.NewFolderBox.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { Invoke-HubSafe { Invoke-AddFolder } } })
     $ui.CheckChildrenButton.Add_Click({ Invoke-HubSafe { Invoke-CheckChildren } -Title 'Falha ao marcar pastas' })
     $ui.ApplyDefaultsButton.Add_Click({ Invoke-HubSafe { Invoke-ApplyDefaults } })
+    $script:SystemTimer = New-HubTimer -IntervalMs 400 -OnTick { Invoke-HubSafe { On-SystemTick } -Title 'Falha ao buscar sistemas' }
+    $ui.SystemsButton.Add_Click({ Invoke-HubSafe {
+                $srv = $script:UI.DefaultServerBox.Text.Trim()
+                if (-not $srv) { $script:UI.SystemsInfo.Text = 'Informe o Benner Server antes de buscar os sistemas.'; return }
+                Request-SystemNames $srv -Force
+            } })
+    $ui.DefaultServerBox.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { Invoke-HubSafe { Request-SystemNames $script:UI.DefaultServerBox.Text -Force } } })
+    $ui.DefaultServerBox.Add_LostFocus({ Invoke-HubSafe {
+                $srv = $script:UI.DefaultServerBox.Text.Trim()
+                if ($srv) { Request-SystemNames $srv } else { $script:UI.DefaultSystemBox.ItemsSource = $null }
+            } })
+    $ui.SubfolderCheck.Add_Click({ Invoke-HubSafe { Update-Preview } })
     $ui.FolderGrid.AddHandler([System.Windows.Controls.Primitives.ButtonBase]::ClickEvent, [System.Windows.RoutedEventHandler] {
             param($s, $e)
             $src = $e.OriginalSource
