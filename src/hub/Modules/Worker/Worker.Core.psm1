@@ -590,18 +590,34 @@ function Get-WorkerInstallTargets {
 $script:SystemNamesChildCode = @'
 $global:WkLib=$args[0]; $server=$args[1]; $out=$args[2]
 $ErrorActionPreference='Stop'
-$global:WkAsm=@{}
-function global:Get-WkAssembly([string]$Name) {
-    if ($global:WkAsm.ContainsKey($Name)) { return $global:WkAsm[$Name] }
-    $f = Join-Path $global:WkLib ($Name + '.dll')
-    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
-    $a = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($f))
-    $global:WkAsm[$Name] = $a
-    return $a
+# Resolvedor de dependencias compilado (um scriptblock no AssemblyResolve entra em recursao e derruba o
+# processo com estouro de pilha, porque o proprio PowerShell dispara o evento ao executar o bloco).
+Add-Type -TypeDefinition @"
+using System; using System.IO; using System.Reflection; using System.Collections.Generic;
+public static class WkResolver {
+    static string lib;
+    static readonly Dictionary<string, Assembly> cache = new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
+    [ThreadStatic] static bool busy;
+    public static void Init(string folder) { lib = folder; AppDomain.CurrentDomain.AssemblyResolve += OnResolve; }
+    public static Assembly Get(string name) {
+        Assembly a;
+        if (cache.TryGetValue(name, out a)) return a;
+        string f = Path.Combine(lib, name + ".dll");
+        if (!File.Exists(f)) return null;
+        a = Assembly.Load(File.ReadAllBytes(f));
+        cache[name] = a;
+        return a;
+    }
+    static Assembly OnResolve(object sender, ResolveEventArgs e) {
+        if (busy) return null;
+        busy = true;
+        try { return Get(new AssemblyName(e.Name).Name); } catch { return null; } finally { busy = false; }
+    }
 }
-[AppDomain]::CurrentDomain.add_AssemblyResolve({ param($s, $e) Get-WkAssembly ((New-Object Reflection.AssemblyName($e.Name)).Name) })
+"@
+[WkResolver]::Init($global:WkLib)
 try {
-    $asm = Get-WkAssembly 'Benner.Tecnologia.BServer.Clients'
+    $asm = [WkResolver]::Get('Benner.Tecnologia.BServer.Clients')
     if ($null -eq $asm) { throw 'Benner.Tecnologia.BServer.Clients.dll nao encontrada.' }
     $client = [Activator]::CreateInstance($asm.GetType('Benner.Tecnologia.BServer.Clients.BConnectionClient', $true))
     try {
@@ -655,7 +671,11 @@ function Read-WorkerSystemNamesResult {
     $err = $Query.OutFile + '.erro'
     try {
         if (Test-Path -LiteralPath $err -PathType Leaf) { throw ('Benner Server {0}: {1}' -f $Query.Server, [IO.File]::ReadAllText($err).Trim()) }
-        if (-not (Test-Path -LiteralPath $Query.OutFile -PathType Leaf)) { throw "Benner Server $($Query.Server): sem resposta (codigo $($Query.Process.ExitCode))." }
+        if (-not (Test-Path -LiteralPath $Query.OutFile -PathType Leaf)) {
+            $code = $Query.Process.ExitCode
+            $why = $(if ($code -eq -1073741571) { 'a consulta caiu (estouro de pilha)' } else { "a consulta terminou sem resposta (codigo $code)" })
+            throw "Benner Server $($Query.Server): $why"
+        }
         return , @([IO.File]::ReadAllLines($Query.OutFile) | Where-Object { $_.Trim() })
     } finally {
         foreach ($f in @($Query.OutFile, $err)) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }

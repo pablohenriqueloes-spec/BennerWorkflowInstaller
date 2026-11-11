@@ -9,6 +9,20 @@ Test-WorkerViewBusy informa se ha lote em andamento (o HUB nao fecha nesse caso)
 Import-Module (Join-Path $PSScriptRoot 'Worker.Core.psm1') -DisableNameChecking
 
 $script:Settings = Get-WorkerSettings
+
+# Item das listas de fila: Value (gravado na linha) e Label (exibido).
+if (-not ('BennerHub.WorkerQueueOption' -as [type])) {
+    Add-Type -TypeDefinition @'
+namespace BennerHub {
+    public class WorkerQueueOption {
+        public string Value { get; private set; }
+        public string Label { get; private set; }
+        public WorkerQueueOption(string value, string label) { Value = value; Label = label; }
+        public override string ToString() { return Label; }
+    }
+}
+'@
+}
 $script:UI = @{}
 $script:Package = $null
 $script:FolderRows = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
@@ -230,12 +244,10 @@ function Get-VersionOrDefault { if ($null -ne $script:Package) { return $script:
 function Set-DefaultsForVersion([string]$Version) {
     $info = Get-WorkerVersionInfo -Version $Version
     $ui = $script:UI
-    # Opcoes da fila (lista fechada por versao): itens HubRow com [Value] e [Label], usados no padrao e em cada linha.
+    # Opcoes da fila (lista fechada por versao), usadas no padrao e em cada linha. Classe com propriedade
+    # Value e ToString = rotulo: o ComboBox nao avalia caminho de indexador em DisplayMemberPath/SelectedValuePath.
     $script:QueueOptions = @($info.Queues | ForEach-Object {
-            $o = New-Object BennerHub.HubRow
-            $o['Value'] = $_
-            $o['Label'] = '{0} ({1})' -f $info.QueueLabels[$_], $_
-            $o
+            New-Object BennerHub.WorkerQueueOption -ArgumentList $_, ('{0} ({1})' -f $info.QueueLabels[$_], $_)
         })
     $ui.DefaultFilaBox.ItemsSource = $script:QueueOptions
     $ui.DefaultFilaBox.SelectedValue = $info.DefaultFila
@@ -606,7 +618,7 @@ function On-SystemTick {
             $script:UI.SystemsInfo.Text = "$($names.Count) sistema(s) no Benner Server $($q.Server). Escolha na lista do Sistema (ou digite)."
         } catch {
             $script:SystemCache[$key] = @()
-            $script:UI.SystemsInfo.Text = "Não foi possível buscar os sistemas: $($_.Exception.Message). Digite o Sistema."
+            $script:UI.SystemsInfo.Text = "Não foi possível buscar os sistemas: $($_.Exception.Message.TrimEnd('.')). Digite o Sistema."
         } finally { try { $q.Process.Dispose() } catch {} }
     }
     Update-SystemLists $q.Server
