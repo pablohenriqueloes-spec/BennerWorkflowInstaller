@@ -29,6 +29,11 @@ src/hub/
       Workflow.Core.psm1       cada etapa do Workflow como função, sem nenhuma tela
       Workflow.View.xaml       tela do módulo
       Workflow.View.psm1       liga a tela às funções de Workflow.Core.psm1
+    Worker/                    instalação em lote do Benner Worker 23 e 25 (veja docs/WORKER.md)
+      module.psd1
+      Worker.Core.psm1
+      Worker.View.xaml
+      Worker.View.psm1
 ```
 
 A regra é: **regra de negócio só nos arquivos `*.Core.psm1`**. As telas apenas chamam essas funções. Assim, qualquer etapa pode ser chamada de outro lugar (outro módulo, um script agendado, outra tela) sem retrabalho.
